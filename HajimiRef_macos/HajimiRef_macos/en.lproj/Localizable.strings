@@ -1,0 +1,19 @@
+/* 
+  Localizable.strings
+  HajimiRef
+
+  Created by HajimiRef on 2025/11/29.
+*/
+
+"Open Images..." = "Open Images...";
+"Save Board..." = "Save Board...";
+"Load Board..." = "Load Board...";
+"Always on Top" = "Always on Top";
+"Remove Background (NPU)" = "Remove Background (NPU)";
+"Delete" = "Delete";
+"Reset Scale" = "Reset Scale";
+"Bring to Front" = "Bring to Front";
+"Send to Back" = "Send to Back";
+"View" = "View";
+"File" = "File";
+"About Hajimi Ref" = "About Hajimi Ref";

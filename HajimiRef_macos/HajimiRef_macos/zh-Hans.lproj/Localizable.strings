@@ -1,0 +1,19 @@
+/* 
+  Localizable.strings
+  HajimiRef
+
+  Created by HajimiRef on 2025/11/29.
+*/
+
+"Open Images..." = "打开图片...";
+"Save Board..." = "保存看板...";
+"Load Board..." = "读取看板...";
+"Always on Top" = "始终置顶";
+"Remove Background (NPU)" = "移除背景 (NPU)";
+"Delete" = "删除";
+"Reset Scale" = "重置缩放";
+"Bring to Front" = "置于顶层";
+"Send to Back" = "置于底层";
+"View" = "视图";
+"File" = "文件";
+"About Hajimi Ref" = "关于 Hajimi Ref";

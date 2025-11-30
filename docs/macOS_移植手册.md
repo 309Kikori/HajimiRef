@@ -1,12 +1,3 @@
-<!--
- * @Author: Xhinonome
- * @Date: 2025-11-29 21:30:02
- * @LastEditors: Quantize 161130485+309Kikori@users.noreply.github.com
- * @LastEditTime: 2025-11-30 21:38:57
- * @FilePath: /fantastic-fortnight/Users/shinonome/Documents/Hajimi_ref/docs/macOS_移植手册.md
- * @Description: 头部注释配置模板
- * Copyright ©2020- 2025 by Xhinonome, All Rights Reserved. 
--->
 # Hajimi Ref (macOS) 移植开发手册
 
 ## 1. 项目概述

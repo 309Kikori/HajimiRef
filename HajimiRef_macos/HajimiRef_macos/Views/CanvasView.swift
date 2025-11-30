@@ -339,11 +339,15 @@ struct CanvasView: View {
                 let x1 = p.x - frameWidth / 2
                 let y1 = p.y - frameHeight / 2
                 
-                let x2 = x1 - offset.width
-                let y2 = y1 - offset.height
+                // Inverse Transform:
+                // Screen = Center + (World + Offset - Center) * Scale
+                // World = (Screen - Center) / Scale - Offset + Center
                 
-                let x3 = x2 / scale
-                let y3 = y2 / scale
+                let x2 = x1 / scale
+                let y2 = y1 / scale
+                
+                let x3 = x2 - offset.width
+                let y3 = y2 - offset.height
                 
                 let x4 = x3 + frameWidth / 2
                 let y4 = y3 + frameHeight / 2

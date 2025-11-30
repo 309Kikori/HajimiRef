@@ -3,7 +3,7 @@
  * @Date: 2025-11-29 21:30:02
  * @LastEditors: Quantize 161130485+309Kikori@users.noreply.github.com
  * @LastEditTime: 2025-11-29 22:07:31
- * @FilePath: /fantastic-fortnight/Users/shinonome/Documents/Hajimi_ref/docs/macOS_移植手册.md
+ * @FilePath: docs/macOS_移植手册.md
  * @Description: 头部注释配置模板
  * Copyright ©2020- 2025 by Xhinonome, All Rights Reserved. 
 -->
@@ -30,12 +30,12 @@ Hajimi Ref (macOS) 是原 Python 版 Hajimi Ref 的原生移植版本，专为 m
 *   **内存管理**: 包含 `compactMemory()` 预留接口，利用 ARC 自动管理内存。
 
 #### `CanvasView` (Rendering Layer)
-*   **混合渲染**: 
-    *   底层使用 `NSViewRepresentable` 封装的 `InputHandlerView` 处理原生鼠标事件（中键平移、滚轮缩放、快捷键监听）。
-    *   上层使用 SwiftUI `Image` 组件渲染图片，利用系统级优化保证高性能。
+*   **混合渲染与事件拦截**: 
+    *   **WindowAccessor**: 引入了 `WindowAccessor` 机制，通过 `NSViewRepresentable` 获取底层 `NSWindow` 实例。
+    *   **全局事件监听**: 使用 `NSEvent.addLocalMonitorForEvents` 在窗口级别拦截鼠标和键盘事件。这有效解决了 SwiftUI `DragGesture` 吞噬鼠标中键和滚轮事件的问题，实现了无缝的画布平移与缩放。
 *   **交互优化**:
-    *   **选中边框**: 动态计算边框宽度 (`3.0 / totalScale`)，确保在任何缩放级别下边框视觉宽度恒定。
-    *   **平滑缩放**: 针对 macOS 触控板和鼠标滚轮分别调优了缩放系数。
+    *   **恒定视觉边框**: 动态计算边框宽度 (`3.0 / totalScale`)，确保在任何缩放级别下选中框在屏幕上保持恒定的像素宽度（如 3px），提供专业设计软件级的视觉体验。
+    *   **无限画布**: 通过 `ZStack` 配合全局 `offset` 和 `scaleEffect` 模拟 2D 摄像机运动。
 
 #### `ImageModel` (Data Model)
 *   **数据结构**: `ImageEntity` 结构体，遵循 `Codable` 协议。
@@ -70,3 +70,19 @@ Hajimi Ref (macOS) 是原 Python 版 Hajimi Ref 的原生移植版本，专为 m
 ## 4. 数据存储
 *   **格式**: 兼容原版 `.sref` (JSON)。
 *   **互通性**: 可直接读取 Python 版生成的 `.sref` 文件。
+
+## 5. 近期更新日志 (2025-11-30)
+
+### 5.1 核心架构修复
+*   **事件系统重构**: 废弃了早期的 `InputHandlerView` 方案，改用 **Window-Level Event Monitoring**。
+    *   *问题*: 当鼠标悬停在图片上时，SwiftUI 的手势识别器会拦截所有事件，导致无法使用中键平移画布。
+    *   *解决*: 通过 `WindowAccessor` 挂载 `LocalMonitor`，在事件分发给视图之前进行拦截和处理。
+*   **路径修正**: 修正了项目文件结构中的路径错误，确保所有修改正确应用到 `Hajimi_ref` 仓库。
+
+### 5.2 文档与规范
+*   **全代码库注释**: 完成了 `Views`, `Models`, `App` 等核心模块的详细中文注释。
+*   **设计决策文档化**: 在代码注释中显式标注了 **[视觉设计]** 和 **[交互设计]** 标签，解释了如“点击空白取消选择”、“深色背景减少眼疲劳”、“NPU 蒙版合成”等设计决策背后的 UX 考量。
+
+### 5.3 功能完善
+*   **视觉微调**: 优化了选中态的边框渲染逻辑，使其在缩放时保持视觉一致性。
+*   **菜单栏集成**: 完善了 macOS 菜单栏命令（打开、保存、置顶），符合 macOS HIG 规范。

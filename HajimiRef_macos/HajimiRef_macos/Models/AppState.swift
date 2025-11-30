@@ -201,6 +201,58 @@ class AppState {
         }
     }
     
+    // MARK: - Smart Arrangement (智能排序)
+    
+    func smartSortSelected() {
+        guard !selectedImageIds.isEmpty else { return }
+        
+        // 1. 获取选中的图片实体
+        let selectedImages = images.filter { selectedImageIds.contains($0.id) }
+        guard !selectedImages.isEmpty else { return }
+        
+        // 2. 计算边界框以确定起始位置
+        let minX = selectedImages.map { $0.x }.min() ?? 0
+        let minY = selectedImages.map { $0.y }.min() ?? 0
+        
+        // 3. 简单的流式布局 (Flow Layout)
+        // 我们尝试将图片排列成一个近似的正方形网格。
+        let count = CGFloat(selectedImages.count)
+        let columns = ceil(sqrt(count))
+        
+        var currentX: CGFloat = minX
+        var currentY: CGFloat = minY
+        var maxHeightInRow: CGFloat = 0
+        var columnIndex: CGFloat = 0
+        
+        // 4. 应用布局
+        // 我们需要更新原始数组中的位置
+        for image in selectedImages {
+            if let index = images.firstIndex(where: { $0.id == image.id }) {
+                let img = images[index]
+                let width = (img.nsImage?.size.width ?? 100) * img.scale
+                let height = (img.nsImage?.size.height ?? 100) * img.scale
+                
+                // 移动图片
+                // 注意：我们的坐标系是中心点，所以需要加上半宽/半高
+                images[index].x = currentX + width / 2
+                images[index].y = currentY + height / 2
+                
+                // 更新游标
+                currentX += width + 20 // 20px 间距
+                maxHeightInRow = max(maxHeightInRow, height)
+                columnIndex += 1
+                
+                // 换行
+                if columnIndex >= columns {
+                    currentX = minX
+                    currentY += maxHeightInRow + 20 // 20px 间距
+                    maxHeightInRow = 0
+                    columnIndex = 0
+                }
+            }
+        }
+    }
+
     // MARK: - NPU / Vision Features
     // 利用 Apple 的 Vision 框架和神经引擎 (NPU) 进行高级图像处理。
     

@@ -1,62 +1,137 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Input Handler (NSView)
-struct InputHandlerView: NSViewRepresentable {
+// MARK: - Window Accessor & Event Monitor
+struct WindowAccessor: NSViewRepresentable {
     @Environment(AppState.self) var appState
     
-    func makeNSView(context: Context) -> InputView {
-        let view = InputView()
-        view.appState = appState
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                context.coordinator.setupMonitor(for: window)
+            }
+        }
         return view
     }
     
-    func updateNSView(_ nsView: InputView, context: Context) {
-        nsView.appState = appState
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.appState = appState
     }
     
-    class InputView: NSView {
-        weak var appState: AppState?
+    func makeCoordinator() -> Coordinator {
+        Coordinator(appState: appState)
+    }
+    
+    class Coordinator {
+        var appState: AppState
+        private var monitor: Any?
+        private weak var window: NSWindow?
         
-        override var acceptsFirstResponder: Bool { true }
-        
-        // Middle Mouse Pan State
+        // Pan State
         private var isPanning = false
         private var lastPanLocation: NSPoint = .zero
         
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            // Ensure we can become first responder to receive key events
-            window?.makeFirstResponder(self)
+        init(appState: AppState) {
+            self.appState = appState
         }
         
-        // MARK: - Key Events (键盘事件)
-        override func keyDown(with event: NSEvent) {
-            // 'F' to center content (F键聚焦)
+        deinit {
+            removeMonitor()
+        }
+        
+        func setupMonitor(for window: NSWindow) {
+            self.window = window
+            removeMonitor()
+            
+            // Monitor events globally in the window (Local Monitor)
+            // This captures events before they are dispatched to views, allowing us to intercept Scroll/Pan
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .otherMouseDown, .otherMouseDragged, .otherMouseUp, .keyDown]) { [weak self] event in
+                return self?.handleEvent(event) ?? event
+            }
+        }
+        
+        private func removeMonitor() {
+            if let monitor = monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+        
+        private func handleEvent(_ event: NSEvent) -> NSEvent? {
+            // Only handle if window is active
+            guard let window = window, window.isKeyWindow else { return event }
+            
+            switch event.type {
+            case .scrollWheel:
+                handleScrollWheel(event)
+                return nil // Consume event to prevent default behavior (like scrolling the document view if any)
+                
+            case .magnify:
+                handleMagnify(event)
+                return nil
+                
+            case .otherMouseDown:
+                if event.buttonNumber == 2 { // Middle Button
+                    isPanning = true
+                    lastPanLocation = event.locationInWindow
+                    NSCursor.closedHand.push()
+                    return nil
+                }
+                
+            case .otherMouseDragged:
+                if isPanning {
+                    let currentLocation = event.locationInWindow
+                    let deltaX = currentLocation.x - lastPanLocation.x
+                    let deltaY = currentLocation.y - lastPanLocation.y
+                    
+                    appState.canvasOffset.width += deltaX
+                    appState.canvasOffset.height -= deltaY
+                    
+                    lastPanLocation = currentLocation
+                    return nil
+                }
+                
+            case .otherMouseUp:
+                if event.buttonNumber == 2 {
+                    isPanning = false
+                    NSCursor.pop()
+                    return nil
+                }
+                
+            case .keyDown:
+                if handleKeyDown(event) {
+                    return nil
+                }
+                
+            default:
+                break
+            }
+            
+            return event
+        }
+        
+        // MARK: - Key Events
+        private func handleKeyDown(_ event: NSEvent) -> Bool {
             if event.charactersIgnoringModifiers == "f" {
-                appState?.centerContent()
-            } 
-            // Cmd + [ : Send Backward (后移一层)
-            else if event.modifierFlags.contains(.command) && event.characters == "[" {
-                if let id = appState?.selectedImageIds.first {
-                    appState?.sendBackward(id: id)
+                appState.centerContent()
+                return true
+            } else if event.modifierFlags.contains(.command) && event.characters == "[" {
+                if let id = appState.selectedImageIds.first {
+                    appState.sendBackward(id: id)
+                    return true
+                }
+            } else if event.modifierFlags.contains(.command) && event.characters == "]" {
+                if let id = appState.selectedImageIds.first {
+                    appState.bringForward(id: id)
+                    return true
                 }
             }
-            // Cmd + ] : Bring Forward (前移一层)
-            else if event.modifierFlags.contains(.command) && event.characters == "]" {
-                if let id = appState?.selectedImageIds.first {
-                    appState?.bringForward(id: id)
-                }
-            }
-            else {
-                super.keyDown(with: event)
-            }
+            return false
         }
         
         // MARK: - Scroll Wheel (Zoom)
-        override func scrollWheel(with event: NSEvent) {
-            guard let appState = appState else { return }
-            
+        private func handleScrollWheel(_ event: NSEvent) {
             if event.modifierFlags.contains(.control) {
                 // Ctrl + Wheel -> Scale Selected Images
                 let scaleFactor: CGFloat = event.deltaY > 0 ? 1.05 : 0.95
@@ -67,66 +142,18 @@ struct InputHandlerView: NSViewRepresentable {
                 }
             } else {
                 // Wheel -> Zoom Canvas
-                // Use deltaY for zoom. 
-                let zoomDelta = event.deltaY * 0.005 // Reduced sensitivity for smoother control
+                let zoomDelta = event.deltaY * 0.005
                 let zoomFactor = 1.0 + zoomDelta
-                
-                // Apply zoom
                 let newScale = appState.canvasScale * zoomFactor
-                // Clamp scale to reasonable limits (e.g., 0.1x to 10x)
                 appState.canvasScale = min(max(newScale, 0.1), 10.0)
             }
         }
         
-        // MARK: - Magnify (Trackpad Pinch)
-        override func magnify(with event: NSEvent) {
-            guard let appState = appState else { return }
+        // MARK: - Magnify
+        private func handleMagnify(_ event: NSEvent) {
             let zoomFactor = 1.0 + event.magnification
             let newScale = appState.canvasScale * zoomFactor
             appState.canvasScale = min(max(newScale, 0.1), 10.0)
-        }
-        
-        // MARK: - Middle Mouse (Pan)
-        override func otherMouseDown(with event: NSEvent) {
-            if event.buttonNumber == 2 { // Middle Button
-                isPanning = true
-                lastPanLocation = event.locationInWindow
-                NSCursor.closedHand.push()
-            } else {
-                super.otherMouseDown(with: event)
-            }
-        }
-        
-        override func otherMouseDragged(with event: NSEvent) {
-            if isPanning, let appState = appState {
-                let currentLocation = event.locationInWindow
-                let deltaX = currentLocation.x - lastPanLocation.x
-                let deltaY = currentLocation.y - lastPanLocation.y 
-                
-                appState.canvasOffset.width += deltaX
-                appState.canvasOffset.height -= deltaY 
-                
-                lastPanLocation = currentLocation
-            } else {
-                super.otherMouseDragged(with: event)
-            }
-        }
-        
-        override func otherMouseUp(with event: NSEvent) {
-            if event.buttonNumber == 2 {
-                isPanning = false
-                NSCursor.pop()
-            } else {
-                super.otherMouseUp(with: event)
-            }
-        }
-        
-        // MARK: - Left Mouse
-        override func mouseDown(with event: NSEvent) {
-            // Click on background clears selection
-            appState?.selectedImageIds.removeAll()
-            window?.makeFirstResponder(self) // Ensure focus
-            super.mouseDown(with: event)
         }
     }
 }
@@ -139,25 +166,35 @@ struct CanvasView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 1. Input Handler Layer (Background)
+                // 1. Background Layer (Click to clear selection)
+                // [视觉设计] 使用几乎透明的黑色来捕获点击事件。
+                // 这允许用户点击画布空白处来取消选择图片，模仿了标准设计软件（如 Photoshop, Figma）的交互行为。
                 Color.black.opacity(0.001)
-                    .overlay(InputHandlerView())
-                    .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-                        loadImages(from: providers)
-                        return true
+                    .onTapGesture {
+                        appState.selectedImageIds.removeAll()
                     }
                 
                 // 2. Images Layer
+                // [视觉设计] 这个 ZStack 容纳所有图片实体。
+                // ForEach 中的顺序决定了 Z-index（渲染顺序）。数组后方的图片会被绘制在上方。
                 ZStack {
                     ForEach(appState.images) { image in
                         ImageView(imageEntity: image)
                     }
                 }
+                // [视觉设计] 整个画布作为一个整体进行变换（偏移 & 缩放）。
+                // 这创造了 2D 无限画布摄像机平移/缩放的视觉错觉。
                 .offset(appState.canvasOffset)
                 .scaleEffect(appState.canvasScale)
             }
-            .clipped()
-            .background(Color(nsColor: .darkGray))
+            .clipped() // [视觉设计] 确保内容不会溢出窗口边界。
+            .background(Color(nsColor: .darkGray)) // [视觉设计] 中性深灰背景减少眼部疲劳，并为参考图提供良好的对比度。
+            // Attach Window Accessor to background to capture window events
+            .background(WindowAccessor())
+            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                loadImages(from: providers)
+                return true
+            }
         }
     }
     
@@ -202,18 +239,22 @@ struct ImageView: View {
     
     var body: some View {
         if let nsImage = imageEntity.nsImage {
-            // Calculate border width to be constant in screen space (e.g. 3 points)
-            // Total scale = image scale * canvas scale
-            // We clamp the divisor to avoid division by zero or extremely large borders
+            // [视觉设计] 恒定屏幕空间边框宽度
+            // 我们动态计算边框宽度，使其在屏幕上看起来保持恒定的厚度（例如 3 点），
+            // 无论用户放大或缩小了多少。
+            // 公式：期望宽度 / (图片缩放 * 画布缩放)
+            // 我们限制除数以避免除以零或在极度缩小时产生过大的边框。
             let totalScale = max(imageEntity.scale * zoomScale * appState.canvasScale, 0.01)
             let borderWidth = 3.0 / totalScale
             
             Image(nsImage: nsImage)
                 .resizable()
-                .antialiased(true)
-                .aspectRatio(contentMode: .fit)
+                .antialiased(true) // [视觉设计] 对于旋转的图像至关重要，可避免边缘锯齿（aliasing）。
+                .aspectRatio(contentMode: .fit) // [视觉设计] 保持参考图的原始纵横比。
                 .frame(width: nsImage.size.width, height: nsImage.size.height)
-                // Selection Border
+                // [视觉设计] 选中指示器
+                // 使用标准的系统蓝色来指示选中状态。
+                // 边框作为覆盖层绘制，位于图像内容的“上方”。
                 .overlay(
                     Rectangle()
                         .stroke(Color.blue, lineWidth: isSelected ? borderWidth : 0)

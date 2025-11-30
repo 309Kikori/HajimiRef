@@ -21,11 +21,13 @@ class AppState {
     init() {}
     
     // MARK: - Image Management
+    // 处理应用程序内图片的生命周期。
     
     func addImage(from url: URL, at position: CGPoint = .zero) {
         do {
             let data = try Data(contentsOf: url)
             let base64 = data.base64EncodedString()
+            // 初始化新图片实体，默认缩放 (1.0) 和旋转 (0)。
             let newImage = ImageEntity(x: position.x, y: position.y, scale: 1.0, rotation: 0, data: base64)
             images.append(newImage)
         } catch {
@@ -47,10 +49,14 @@ class AppState {
     func clearBoard() {
         images.removeAll()
         selectedImageIds.removeAll()
+        // Reset canvas view to default state
         canvasOffset = .zero
         canvasScale = 1.0
     }
     
+    // [视觉设计] 内容居中
+    // 自动调整画布偏移和缩放以适应视图中的所有图像。
+    // 这类似于设计工具中的“缩放到合适大小 (Zoom to Fit)”功能。
     func centerContent() {
         guard !images.isEmpty else {
             canvasOffset = .zero
@@ -58,7 +64,7 @@ class AppState {
             return
         }
         
-        // Calculate bounding box of all images
+        // 计算所有图像的边界框
         var minX: CGFloat = .greatestFiniteMagnitude
         var minY: CGFloat = .greatestFiniteMagnitude
         var maxX: CGFloat = -.greatestFiniteMagnitude
@@ -68,7 +74,7 @@ class AppState {
             let w = (img.nsImage?.size.width ?? 100) * img.scale
             let h = (img.nsImage?.size.height ?? 100) * img.scale
             
-            // Simple bounding box approximation (ignoring rotation for simplicity)
+            // 简单的边界框近似（为简单起见忽略旋转）
             let left = img.x - w/2
             let right = img.x + w/2
             let top = img.y - h/2
@@ -85,47 +91,51 @@ class AppState {
         let centerX = (minX + maxX) / 2
         let centerY = (minY + maxY) / 2
         
-        // Reset offset to center the content
+        // 重置偏移以居中内容
         canvasOffset = CGSize(width: -centerX, height: -centerY)
         
-        // Adjust scale to fit
+        // 调整缩放以适应
+        // 我们添加一些填充 (100pt)，这样图像就不会接触到窗口边缘。
         let targetScaleX = 1000.0 / (contentWidth + 100)
         let targetScaleY = 800.0 / (contentHeight + 100)
         let fitScale = min(targetScaleX, targetScaleY)
         
-        // Clamp scale
+        // 将缩放限制在合理范围内 (0.1x 到 2.0x) 以防止过度缩放。
         canvasScale = min(max(fitScale, 0.1), 2.0)
     }
     
     func compactMemory() {
-        // Placeholder
+        // Placeholder for memory optimization logic
     }
     
-    // MARK: - Layer Management (层级管理)
+    // MARK: - Layer Management (Z-Index)
+    // 管理图像的渲染顺序。
+    // 在 SwiftUI 的 ZStack 中，数组中的顺序决定了 Z-index。
+    // 最后一个元素 = 最顶层。
     
     func bringToFront(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }) {
             let item = images.remove(at: index)
-            images.append(item)
+            images.append(item) // Move to end of array
         }
     }
     
     func sendToBack(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }) {
             let item = images.remove(at: index)
-            images.insert(item, at: 0)
+            images.insert(item, at: 0) // Move to start of array
         }
     }
     
     func bringForward(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }), index < images.count - 1 {
-            images.swapAt(index, index + 1)
+            images.swapAt(index, index + 1) // Swap with the element above
         }
     }
     
     func sendBackward(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }), index > 0 {
-            images.swapAt(index, index - 1)
+            images.swapAt(index, index - 1) // Swap with the element below
         }
     }
     
@@ -192,12 +202,15 @@ class AppState {
     }
     
     // MARK: - NPU / Vision Features
+    // 利用 Apple 的 Vision 框架和神经引擎 (NPU) 进行高级图像处理。
     
     func removeBackground(for imageId: UUID) {
         guard let index = images.firstIndex(where: { $0.id == imageId }),
               let nsImage = images[index].nsImage,
               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         
+        // 创建一个请求以生成前景主体的分割蒙版。
+        // 这使用了针对 Apple Silicon 优化的机器学习模型。
         let request = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
         
@@ -205,24 +218,28 @@ class AppState {
             do {
                 try handler.perform([request])
                 if let result = request.results?.first {
+                    // 从分析结果生成蒙版
                     let mask = try result.generateMask(forInstances: result.allInstances)
                     
                     let originalCI = CIImage(cgImage: cgImage)
                     let maskCI = CIImage(cvPixelBuffer: mask)
                     
+                    // 缩放蒙版以匹配原始图像大小
                     let scaleX = originalCI.extent.width / maskCI.extent.width
                     let scaleY = originalCI.extent.height / maskCI.extent.height
                     let scaledMask = maskCI.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
                     
+                    // 使用 Core Image 混合应用蒙版
                     let filter = CIFilter.blendWithMask()
                     filter.inputImage = originalCI
                     filter.maskImage = scaledMask
-                    filter.backgroundImage = CIImage.empty()
+                    filter.backgroundImage = CIImage.empty() // Transparent background
                     
                     if let output = filter.outputImage {
                         let context = CIContext()
                         if let newCGImage = context.createCGImage(output, from: output.extent) {
                             let newNSImage = NSImage(cgImage: newCGImage, size: nsImage.size)
+                            // 转换回 PNG 数据进行存储
                             if let tiff = newNSImage.tiffRepresentation,
                                let bitmap = NSBitmapImageRep(data: tiff),
                                let pngData = bitmap.representation(using: .png, properties: [:]) {
@@ -230,6 +247,7 @@ class AppState {
                                 let base64 = pngData.base64EncodedString()
                                 
                                 DispatchQueue.main.async {
+                                    // Update the image data in place
                                     self.images[index].data = base64
                                 }
                             }

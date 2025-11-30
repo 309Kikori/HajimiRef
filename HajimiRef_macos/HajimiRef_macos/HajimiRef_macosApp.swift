@@ -22,11 +22,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct HajimiRef_macosApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var appState = AppState()
+    
+    // [国际化] 语言设置
+    // 默认使用系统语言 (nil)，用户可以在设置中覆盖。
+    @AppStorage("appLanguage") private var appLanguage: String = "system"
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(appState)
+                // [国际化] 动态语言切换
+                // 如果用户选择了特定语言，我们覆盖环境的 locale。
+                // 注意：这可能不会立即更新所有系统提供的组件，但对 SwiftUI 视图有效。
+                .environment(\.locale, appLanguage == "system" ? .current : Locale(identifier: appLanguage))
         }
         // [视觉与交互设计] 菜单栏命令
         // 我们自定义 macOS 菜单栏以提供对基本功能的快速访问。
@@ -75,5 +83,19 @@ struct HajimiRef_macosApp: App {
                     .keyboardShortcut("t", modifiers: [.command, .shift])
             }
         }
+        
+        // Settings Window
+        // Standard macOS Settings/Preferences window.
+        // Accessible via "Hajimi Ref > Settings..." or Cmd+,
+        Settings {
+            SettingsView()
+                // [国际化] 修复设置窗口语言不跟随的问题
+                // Settings 场景是独立的，需要单独注入环境变数。
+                .environment(\.locale, appLanguage == "system" ? .current : Locale(identifier: appLanguage))
+        }
+        // [交互设计] 允许设置窗口调整大小
+        // 使用 .contentSize 允许窗口在内容定义的最小和最大尺寸之间调整。
+        // 配合 SettingsView 中的 frame(minWidth: ..., maxWidth: ...)，实现完全可调整的窗口。
+        .windowResizability(.contentSize)
     }
 }

@@ -1,0 +1,35 @@
+/* 
+  Localizable.strings
+  HajimiRef
+
+  Created by HajimiRef on 2025/11/29.
+*/
+
+"Open Images..." = "Open Images...";
+"Save Board..." = "Save Board...";
+"Load Board..." = "Load Board...";
+"Always on Top" = "Always on Top";
+"Remove Background (NPU)" = "Remove Background (NPU)";
+"Delete" = "Delete";
+"Reset Scale" = "Reset Scale";
+"Bring to Front" = "Bring to Front";
+"Send to Back" = "Send to Back";
+"View" = "View";
+"File" = "File";
+"About Hajimi Ref" = "About Hajimi Ref";
+
+/* Settings */
+"General" = "General";
+"Personalization" = "Personalization";
+"Canvas Background" = "Canvas Background";
+"Show Dot Grid" = "Show Dot Grid";
+"Dot Grid Color" = "Dot Grid Color";
+"Reset to Defaults" = "Reset to Defaults";
+"Customize the background color of the infinite canvas." = "Customize the background color of the infinite canvas.";
+"Display a dot grid pattern similar to Apple Freeform." = "Display a dot grid pattern similar to Apple Freeform.";
+"Customize the color of the grid dots." = "Customize the color of the grid dots.";
+"Language" = "Language";
+"System Default" = "System Default";
+"Other" = "Other";
+"Smart Sort" = "Smart Sort";
+"Coming Soon..." = "Coming Soon...";

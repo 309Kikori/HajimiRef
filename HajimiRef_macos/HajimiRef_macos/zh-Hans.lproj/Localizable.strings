@@ -1,0 +1,35 @@
+/* 
+  Localizable.strings
+  HajimiRef
+
+  Created by HajimiRef on 2025/11/29.
+*/
+
+"Open Images..." = "打开图片...";
+"Save Board..." = "保存看板...";
+"Load Board..." = "读取看板...";
+"Always on Top" = "始终置顶";
+"Remove Background (NPU)" = "移除背景 (NPU)";
+"Delete" = "删除";
+"Reset Scale" = "重置缩放";
+"Bring to Front" = "置于顶层";
+"Send to Back" = "置于底层";
+"View" = "视图";
+"File" = "文件";
+"About Hajimi Ref" = "关于 Hajimi Ref";
+
+/* Settings */
+"General" = "通用";
+"Personalization" = "个性化";
+"Canvas Background" = "画布背景";
+"Show Dot Grid" = "显示点阵";
+"Dot Grid Color" = "点阵颜色";
+"Reset to Defaults" = "恢复默认设置";
+"Customize the background color of the infinite canvas." = "自定义无限画布的背景颜色。";
+"Display a dot grid pattern similar to Apple Freeform." = "显示类似 Apple 无边记的点阵图案。";
+"Customize the color of the grid dots." = "自定义点阵的颜色。";
+"Language" = "语言";
+"System Default" = "系统默认";
+"Other" = "其他";
+"Smart Sort" = "智能排序";
+"Coming Soon..." = "敬请期待...";

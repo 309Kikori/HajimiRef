@@ -12,6 +12,10 @@ class AppState {
     var canvasScale: CGFloat = 1.0
     var selectedImageIds: Set<UUID> = []
     
+    // [交互状态] 临时拖拽偏移
+    // 用于在拖拽过程中实时更新所有选中图片的位置，而不需要频繁提交到 images 数组。
+    var currentDragOffset: CGSize = .zero
+    
     var isAlwaysOnTop: Bool = false {
         didSet {
             updateWindowLevel()

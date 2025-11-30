@@ -403,7 +403,9 @@ struct ImageView: View {
     var imageEntity: ImageEntity
     
     // Local state for gestures
-    @State private var dragOffset: CGSize = .zero
+    // 注意：dragOffset 现在只用于 resizeGesture。
+    // 移动图片的 dragOffset 已经移至 AppState.currentDragOffset 以支持多选移动。
+    @State private var resizeDragOffset: CGSize = .zero
     @State private var zoomScale: CGFloat = 1.0
     @State private var rotationAngle: Angle = .zero
     
@@ -417,6 +419,10 @@ struct ImageView: View {
             let totalScale = max(imageEntity.scale * zoomScale * appState.canvasScale, 0.01)
             let borderWidth = 3.0 / totalScale
             let handleSize = 12.0 / totalScale // 恒定大小的手柄
+            
+            // 计算当前显示的偏移量
+            // 如果被选中，叠加全局拖拽偏移；如果是 Resize 操作，叠加本地 Resize 偏移。
+            let currentOffset = isSelected ? appState.currentDragOffset : .zero
             
             Image(nsImage: nsImage)
                 .resizable()
@@ -455,24 +461,50 @@ struct ImageView: View {
                 )
                 .scaleEffect(imageEntity.scale * zoomScale)
                 .rotationEffect(Angle(degrees: imageEntity.rotation) + rotationAngle)
-                .position(x: imageEntity.x + dragOffset.width, y: imageEntity.y + dragOffset.height)
+                .position(x: imageEntity.x + currentOffset.width + resizeDragOffset.width,
+                          y: imageEntity.y + currentOffset.height + resizeDragOffset.height)
                 // Gestures
                 .gesture(
                     SimultaneousGesture(
                         // Drag to Move
-                        DragGesture()
+                        // [交互优化] 使用全局坐标系 (Canvas)
+                        // 避免使用 .local，因为手势过程中视图本身的位置会发生变化，导致坐标系不稳定（闪烁/不跟手）。
+                        DragGesture(coordinateSpace: .named("Canvas"))
                             .onChanged { value in
-                                dragOffset = value.translation
+                                // [交互逻辑] 多选移动支持
+                                // 1. 如果拖拽的是未选中的图片，且没有按 Shift，则单选它。
                                 if !isSelected {
-                                    appState.selectedImageIds = [imageEntity.id]
+                                    if !NSEvent.modifierFlags.contains(.shift) {
+                                        appState.selectedImageIds = [imageEntity.id]
+                                    } else {
+                                        appState.selectedImageIds.insert(imageEntity.id)
+                                    }
                                 }
+                                
+                                // 2. 更新全局拖拽偏移 (除以 canvasScale 以适应缩放)
+                                // 注意：value.translation 是屏幕像素 (Canvas Space)，需要转换为世界坐标增量。
+                                appState.currentDragOffset = CGSize(
+                                    width: value.translation.width / appState.canvasScale,
+                                    height: value.translation.height / appState.canvasScale
+                                )
                             }
                             .onEnded { value in
-                                if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
-                                    appState.images[index].x += value.translation.width
-                                    appState.images[index].y += value.translation.height
+                                // 3. 提交移动
+                                // 将偏移量应用到所有选中的图片
+                                let finalOffset = CGSize(
+                                    width: value.translation.width / appState.canvasScale,
+                                    height: value.translation.height / appState.canvasScale
+                                )
+                                
+                                for id in appState.selectedImageIds {
+                                    if let index = appState.images.firstIndex(where: { $0.id == id }) {
+                                        appState.images[index].x += finalOffset.width
+                                        appState.images[index].y += finalOffset.height
+                                    }
                                 }
-                                dragOffset = .zero
+                                
+                                // 4. 重置全局偏移
+                                appState.currentDragOffset = .zero
                             }
                         ,
                         SimultaneousGesture(
@@ -503,7 +535,16 @@ struct ImageView: View {
                     )
                 )
                 .onTapGesture {
-                    appState.selectedImageIds = [imageEntity.id]
+                    // [交互逻辑] Shift 多选 / 反选
+                    if NSEvent.modifierFlags.contains(.shift) {
+                        if isSelected {
+                            appState.selectedImageIds.remove(imageEntity.id)
+                        } else {
+                            appState.selectedImageIds.insert(imageEntity.id)
+                        }
+                    } else {
+                        appState.selectedImageIds = [imageEntity.id]
+                    }
                 }
                 .contextMenu {
                     Button(LocalizedStringKey("Smart Sort")) {
@@ -581,13 +622,13 @@ struct ImageView: View {
                 
                 switch handle {
                 case .bottomTrailing: // 锚点：左上 (Top-Left) -> 中心向右下移
-                    self.dragOffset = CGSize(width: wOffset, height: hOffset)
+                    self.resizeDragOffset = CGSize(width: wOffset, height: hOffset)
                 case .topLeading: // 锚点：右下 (Bottom-Right) -> 中心向左上移
-                    self.dragOffset = CGSize(width: -wOffset, height: -hOffset)
+                    self.resizeDragOffset = CGSize(width: -wOffset, height: -hOffset)
                 case .topTrailing: // 锚点：左下 (Bottom-Left) -> 中心向右上移
-                    self.dragOffset = CGSize(width: wOffset, height: -hOffset)
+                    self.resizeDragOffset = CGSize(width: wOffset, height: -hOffset)
                 case .bottomLeading: // 锚点：右上 (Top-Right) -> 中心向左下移
-                    self.dragOffset = CGSize(width: -wOffset, height: hOffset)
+                    self.resizeDragOffset = CGSize(width: -wOffset, height: hOffset)
                 default: break
                 }
             }
@@ -596,12 +637,12 @@ struct ImageView: View {
                 // 将临时的 zoomScale 和 dragOffset 应用到实体属性中。
                 if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
                     appState.images[index].scale *= zoomScale
-                    appState.images[index].x += dragOffset.width
-                    appState.images[index].y += dragOffset.height
+                    appState.images[index].x += resizeDragOffset.width
+                    appState.images[index].y += resizeDragOffset.height
                 }
                 // 重置临时状态
                 zoomScale = 1.0
-                dragOffset = .zero
+                resizeDragOffset = .zero
             }
     }
 }

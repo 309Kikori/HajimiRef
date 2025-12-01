@@ -1,64 +1,123 @@
+'''
+Author: Xhinonome
+Date: 2025-12-01 11:46:20
+LastEditors: shiragawayoren
+LastEditTime: 2025-12-01 17:48:07
+Description: Description
+hajimi 
+'''
 import sys
 import os
 import json
 import base64
 import io
 from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QGraphicsScene, 
-                               QGraphicsPixmapItem, QFileDialog, QMenu, QMessageBox, QGraphicsItem)
+                               QGraphicsPixmapItem, QFileDialog, QMenu, QMessageBox, QGraphicsItem,
+                               QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QColorDialog, QSpinBox, QCheckBox)
 from PySide6.QtCore import Qt, QByteArray, QBuffer, QPointF, QRectF, QEvent
-from PySide6.QtGui import QPixmap, QImage, QPainter, QAction, QCursor, QTransform, QShortcut, QKeySequence
+from PySide6.QtGui import QPixmap, QImage, QPainter, QAction, QCursor, QTransform, QShortcut, QKeySequence, QColor, QPen, QPalette
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PIL import ImageGrab
-
-# --- Localization ---
-LANGUAGES = {
-    "en": {
-        "title": "SimpleRef (GPU Accelerated)",
-        "file": "File",
-        "open_image": "Add Images",
-        "save_board": "Save Board",
-        "load_board": "Load Board",
-        "clear_board": "Clear Board",
-        "settings": "Settings",
-        "language": "Language",
-        "always_on_top": "Always on Top",
-        "help": "Help",
-        "about": "About",
-        "exit": "Exit",
-        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Ctrl + Wheel: Scale Image\n- Delete: Remove Image",
-        "error": "Error",
-        "save_error": "Failed to save file: {}",
-        "load_error": "Failed to load file: {}",
-    },
-    "zh_cn": {
-        "title": "SimpleRef (GPU 加速版)",
-        "file": "文件",
-        "open_image": "添加图片",
-        "save_board": "保存看板",
-        "load_board": "读取看板",
-        "clear_board": "清空看板",
-        "settings": "设置",
-        "language": "语言",
-        "always_on_top": "始终置顶",
-        "help": "帮助",
-        "about": "关于",
-        "exit": "退出",
-        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Ctrl + 滚轮: 缩放选中图片\n- Delete: 删除图片",
-        "error": "错误",
-        "save_error": "保存文件失败: {}",
-        "load_error": "读取文件失败: {}",
-    }
-}
+from localization import LANGUAGES
 
 class Config:
+    # 配置类 / Configuration class
     language = "zh_cn"
+    bg_color = QColor(40, 40, 40)
+    grid_color = QColor(60, 60, 60)
+    grid_size = 40
+    grid_enabled = True
 
 def tr(key):
+    # 翻译函数 / Translation function
     return LANGUAGES.get(Config.language, LANGUAGES["en"]).get(key, key)
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("preferences"))
+        self.resize(300, 250)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Background Color
+        bg_layout = QHBoxLayout()
+        bg_layout.addWidget(QLabel(tr("bg_color")))
+        self.btn_bg_color = QPushButton()
+        self.btn_bg_color.setFixedSize(50, 25)
+        self.update_color_btn(self.btn_bg_color, Config.bg_color)
+        self.btn_bg_color.clicked.connect(self.pick_bg_color)
+        bg_layout.addWidget(self.btn_bg_color)
+        layout.addLayout(bg_layout)
+
+        # Grid Color
+        grid_c_layout = QHBoxLayout()
+        grid_c_layout.addWidget(QLabel(tr("grid_color")))
+        self.btn_grid_color = QPushButton()
+        self.btn_grid_color.setFixedSize(50, 25)
+        self.update_color_btn(self.btn_grid_color, Config.grid_color)
+        self.btn_grid_color.clicked.connect(self.pick_grid_color)
+        grid_c_layout.addWidget(self.btn_grid_color)
+        layout.addLayout(grid_c_layout)
+
+        # Grid Size
+        grid_s_layout = QHBoxLayout()
+        grid_s_layout.addWidget(QLabel(tr("grid_size")))
+        self.spin_grid_size = QSpinBox()
+        self.spin_grid_size.setRange(10, 200)
+        self.spin_grid_size.setValue(Config.grid_size)
+        self.spin_grid_size.valueChanged.connect(self.set_grid_size)
+        grid_s_layout.addWidget(self.spin_grid_size)
+        layout.addLayout(grid_s_layout)
+
+        # Show Grid
+        self.chk_grid = QCheckBox(tr("show_grid"))
+        self.chk_grid.setChecked(Config.grid_enabled)
+        self.chk_grid.toggled.connect(self.set_grid_enabled)
+        layout.addWidget(self.chk_grid)
+
+        layout.addStretch()
+        
+        btn_ok = QPushButton(tr("ok"))
+        btn_ok.clicked.connect(self.accept)
+        layout.addWidget(btn_ok)
+
+    def update_color_btn(self, btn, color):
+        btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
+
+    def pick_bg_color(self):
+        color = QColorDialog.getColor(Config.bg_color, self, tr("pick_color"))
+        if color.isValid():
+            Config.bg_color = color
+            self.update_color_btn(self.btn_bg_color, color)
+            self.parent().view.viewport().update()
+
+    def pick_grid_color(self):
+        color = QColorDialog.getColor(Config.grid_color, self, tr("pick_color"))
+        if color.isValid():
+            Config.grid_color = color
+            self.update_color_btn(self.btn_grid_color, color)
+            self.parent().view.viewport().update()
+
+    def set_grid_size(self, val):
+        Config.grid_size = val
+        self.parent().view.viewport().update()
+
+    def set_grid_enabled(self, val):
+        Config.grid_enabled = val
+        self.parent().view.viewport().update()
 
 # --- Graphics Item ---
 class RefItem(QGraphicsPixmapItem):
+    """
+    自定义图形项，用于显示图片 / Custom graphics item for displaying images
+    """
     def __init__(self, pixmap, data=None):
+        """
+        初始化图片项，设置标志和变换模式 / Initialize image item, set flags and transformation mode
+        """
         super().__init__(pixmap)
         self.image_data = data # QByteArray or bytes
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
@@ -69,6 +128,9 @@ class RefItem(QGraphicsPixmapItem):
         self.setOffset(-pixmap.width()/2, -pixmap.height()/2)
 
     def to_dict(self):
+        """
+        将图片信息序列化为字典，用于保存 / Serialize image info to dict for saving
+        """
         pos = self.scenePos()
         # Convert bytes/QByteArray to base64 string
         if isinstance(self.image_data, QByteArray):
@@ -86,7 +148,13 @@ class RefItem(QGraphicsPixmapItem):
 
 # --- Graphics View ---
 class RefView(QGraphicsView):
+    """
+    自定义图形视图，支持 GPU 加速和交互 / Custom graphics view, supports GPU acceleration and interaction
+    """
     def __init__(self, scene, parent=None):
+        """
+        初始化视图，启用 OpenGL，设置渲染提示和交互模式 / Initialize view, enable OpenGL, set render hints and interaction modes
+        """
         super().__init__(scene, parent)
         
         # Enable GPU Acceleration
@@ -106,14 +174,35 @@ class RefView(QGraphicsView):
         self.setDragMode(QGraphicsView.NoDrag)
         
         # Background
-        self.setBackgroundBrush(Qt.darkGray)
+        # self.setBackgroundBrush(Qt.darkGray) # Handled in drawBackground
         
         # State
         self._is_panning = False
         self._pan_start = QPointF()
         self._space_pressed = False
 
+    def drawBackground(self, painter, rect):
+        painter.fillRect(rect, Config.bg_color)
+        
+        if Config.grid_enabled:
+            grid_size = Config.grid_size
+            # Calculate start points to align with the grid
+            left = int(rect.left()) - (int(rect.left()) % grid_size)
+            top = int(rect.top()) - (int(rect.top()) % grid_size)
+            
+            points = []
+            # Draw dots
+            for x in range(left, int(rect.right()) + grid_size, grid_size):
+                for y in range(top, int(rect.bottom()) + grid_size, grid_size):
+                    points.append(QPointF(x, y))
+            
+            painter.setPen(QPen(Config.grid_color, 2))
+            painter.drawPoints(points)
+
     def wheelEvent(self, event):
+        """
+        处理滚轮事件，用于缩放画布或图片 / Handle wheel event for zooming canvas or scaling image
+        """
         # Ctrl + Wheel -> Scale Item
         if event.modifiers() & Qt.ControlModifier:
             items = self.scene().selectedItems()
@@ -128,6 +217,9 @@ class RefView(QGraphicsView):
         self.scale(zoom_factor, zoom_factor)
 
     def mousePressEvent(self, event):
+        """
+        处理鼠标按下事件，用于平移 / Handle mouse press for panning
+        """
         # Middle Click or Space+Left -> Pan
         if event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self._space_pressed):
             self._is_panning = True
@@ -139,6 +231,9 @@ class RefView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        """
+        处理鼠标移动事件，用于平移 / Handle mouse move for panning
+        """
         if self._is_panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()
@@ -155,6 +250,9 @@ class RefView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """
+        处理鼠标释放事件 / Handle mouse release
+        """
         if self._is_panning:
             self._is_panning = False
             self.setCursor(Qt.ArrowCursor)
@@ -164,6 +262,9 @@ class RefView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
+        """
+        处理按键按下事件 (空格键平移) / Handle key press (Space for panning)
+        """
         if event.key() == Qt.Key_Space:
             self._space_pressed = True
             if not self._is_panning:
@@ -171,6 +272,9 @@ class RefView(QGraphicsView):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
+        """
+        处理按键释放事件 / Handle key release
+        """
         if event.key() == Qt.Key_Space:
             self._space_pressed = False
             if not self._is_panning:
@@ -179,7 +283,13 @@ class RefView(QGraphicsView):
 
 # --- Main Window ---
 class MainWindow(QMainWindow):
+    """
+    主窗口类 / Main window class
+    """
     def __init__(self):
+        """
+        初始化主窗口，设置场景、视图、菜单和快捷键 / Initialize main window, set scene, view, menu and shortcuts
+        """
         super().__init__()
         self.setWindowTitle(tr("title"))
         self.resize(1024, 768)
@@ -200,6 +310,9 @@ class MainWindow(QMainWindow):
         self.paste_shortcut.activated.connect(self.paste_image)
 
     def setup_menu(self):
+        """
+        设置菜单栏 / Setup menu bar
+        """
         menubar = self.menuBar()
         
         file_menu = menubar.addMenu(tr("file"))
@@ -229,6 +342,12 @@ class MainWindow(QMainWindow):
         file_menu.addAction(act_exit)
         
         settings_menu = menubar.addMenu(tr("settings"))
+
+        act_prefs = QAction(tr("preferences"), self)
+        act_prefs.triggered.connect(self.show_settings)
+        settings_menu.addAction(act_prefs)
+        
+        settings_menu.addSeparator()
         
         self.act_top = QAction(tr("always_on_top"), self)
         self.act_top.setCheckable(True)
@@ -253,7 +372,14 @@ class MainWindow(QMainWindow):
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.show_context_menu)
 
+    def show_settings(self):
+        dlg = SettingsDialog(self)
+        dlg.exec()
+
     def change_language(self, lang):
+        """
+        切换语言 / Change language
+        """
         Config.language = lang
         self.setWindowTitle(tr("title"))
         # Rebuild menu is complex in Qt dynamic, simpler to just restart or update texts.
@@ -263,6 +389,9 @@ class MainWindow(QMainWindow):
         self.setup_menu()
 
     def toggle_always_on_top(self):
+        """
+        切换窗口置顶状态 / Toggle always on top
+        """
         if self.act_top.isChecked():
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         else:
@@ -270,9 +399,15 @@ class MainWindow(QMainWindow):
         self.show()
 
     def show_about(self):
+        """
+        显示关于对话框 / Show about dialog
+        """
         QMessageBox.information(self, tr("about"), tr("about_text"))
 
     def show_context_menu(self, pos):
+        """
+        显示右键菜单 / Show context menu
+        """
         menu = QMenu(self)
         menu.addAction(tr("open_image"), self.add_images)
         menu.addSeparator()
@@ -281,6 +416,9 @@ class MainWindow(QMainWindow):
         menu.exec(self.view.mapToGlobal(pos))
 
     def add_images(self):
+        """
+        打开文件对话框添加图片 / Open file dialog to add images
+        """
         files, _ = QFileDialog.getOpenFileNames(self, tr("open_image"), "", "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)")
         if files:
             center = self.view.mapToScene(self.view.viewport().rect().center())
@@ -290,6 +428,9 @@ class MainWindow(QMainWindow):
                 offset += 20
 
     def load_image_file(self, path, x, y):
+        """
+        从文件路径加载图片 / Load image from file path
+        """
         try:
             with open(path, "rb") as f:
                 data = f.read()
@@ -298,6 +439,9 @@ class MainWindow(QMainWindow):
             print(f"Error loading {path}: {e}")
 
     def create_item_from_data(self, data, x, y, scale=1.0):
+        """
+        从二进制数据创建图片项 / Create image item from binary data
+        """
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
             item = RefItem(pixmap, data)
@@ -308,10 +452,16 @@ class MainWindow(QMainWindow):
             print("Failed to load pixmap from data")
 
     def delete_selected(self):
+        """
+        删除选中的图片 / Delete selected images
+        """
         for item in self.scene.selectedItems():
             self.scene.removeItem(item)
 
     def paste_image(self):
+        """
+        从剪贴板粘贴图片 / Paste image from clipboard
+        """
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
 
@@ -346,9 +496,15 @@ class MainWindow(QMainWindow):
                     offset += 20
 
     def clear_board(self):
+        """
+        清空画布 / Clear board
+        """
         self.scene.clear()
 
     def save_board(self):
+        """
+        保存看板到文件 / Save board to file
+        """
         path, _ = QFileDialog.getSaveFileName(self, tr("save_board"), "", "SimpleRef Board (*.sref);;JSON (*.json)")
         if not path:
             return
@@ -370,6 +526,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, tr("error"), tr("save_error").format(e))
 
     def load_board(self):
+        """
+        从文件加载看板 / Load board from file
+        """
         path, _ = QFileDialog.getOpenFileName(self, tr("load_board"), "", "SimpleRef Board (*.sref);;JSON (*.json)")
         if not path:
             return
@@ -395,7 +554,41 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, tr("error"), tr("load_error").format(e))
 
 if __name__ == "__main__":
+    # 程序入口 / Program entry point
     app = QApplication(sys.argv)
+    
+    # Modern Dark Theme
+    app.setStyle("Material")
+    palette = app.palette()
+    palette.setColor(QPalette.Window, QColor(53, 53, 53))
+    palette.setColor(QPalette.WindowText, Qt.white)
+    palette.setColor(QPalette.Base, QColor(25, 25, 25))
+    palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    palette.setColor(QPalette.ToolTipBase, Qt.white)
+    palette.setColor(QPalette.ToolTipText, Qt.white)
+    palette.setColor(QPalette.Text, Qt.white)
+    palette.setColor(QPalette.Button, QColor(53, 53, 53))
+    palette.setColor(QPalette.ButtonText, Qt.white)
+    palette.setColor(QPalette.BrightText, Qt.red)
+    palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(palette)
+
+    # Menu Stylesheet / 菜单样式表
+    # 您可以在这里修改菜单的字体颜色 (color) 和背景颜色 (background-color)
+    app.setStyleSheet("""
+        QMenu {
+            background-color: #353535; /* 背景颜色 */
+            color: #E0E0E0;            /* 字体颜色 (偏灰一点的白，不那么刺眼) */
+            border: 1px solid #000;
+        }
+        QMenu::item:selected {
+            background-color: #2a82da; /* 选中项背景色 */
+            color: #ffffff;            /* 选中项字体色 */
+        }
+    """)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

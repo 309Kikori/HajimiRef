@@ -1,3 +1,4 @@
+
 # Hajimi Ref (macOS) 移植开发手册
 
 ## 1. 项目概述
@@ -48,19 +49,14 @@ Hajimi Ref (macOS) 是原 Python 版 Hajimi Ref 的原生移植版本，专为 m
 *   **预缓存**: 图片加载时预先解码为位图，避免滚动时的解码卡顿。
 
 ## 3. 构建与发布
-项目不依赖 Xcode 工程文件，而是使用轻量级的 Shell 脚本进行构建：
-```bash
-./build_app.sh
-```
-该脚本自动执行：
-1.  `swift build -c release` 编译二进制。
-2.  创建 `.app` 包结构。
-3.  使用 `iconutil` 编译 `.icns` 图标。
-4.  生成 `Info.plist` 并签名。
+项目依赖 Xcode 工程文件
 
 ## 4. 数据存储
 *   **格式**: 兼容原版 `.sref` (JSON)。
 *   **互通性**: 可直接读取 Python 版生成的 `.sref` 文件。
+
+
+
 
 ## 5. 近期更新日志 (2025-11-30)
 
@@ -77,3 +73,6 @@ Hajimi Ref (macOS) 是原 Python 版 Hajimi Ref 的原生移植版本，专为 m
 ### 5.3 功能完善
 *   **视觉微调**: 优化了选中态的边框渲染逻辑，使其在缩放时保持视觉一致性。
 *   **菜单栏集成**: 完善了 macOS 菜单栏命令（打开、保存、置顶），符合 macOS HIG 规范。
+
+
+

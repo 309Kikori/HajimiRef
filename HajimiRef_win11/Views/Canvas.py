@@ -33,6 +33,9 @@ class RefItem(QGraphicsPixmapItem):
         self._anchor_scene_pos = None
 
     def paint(self, painter, option, widget=None):
+        """
+        绘制图片项和选中框 / Paint image item and selection border
+        """
         super().paint(painter, option, widget)
         
         if self.isSelected():
@@ -61,6 +64,9 @@ class RefItem(QGraphicsPixmapItem):
                 painter.drawEllipse(corner, radius, radius)
 
     def hoverMoveEvent(self, event):
+        """
+        处理鼠标悬停事件，检测调整大小手柄 / Handle hover event, detect resize handles
+        """
         # Detect corners for resizing
         if self.isSelected():
             pos = event.pos()
@@ -103,6 +109,9 @@ class RefItem(QGraphicsPixmapItem):
         super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event):
+        """
+        处理鼠标按下事件，开始调整大小 / Handle mouse press, start resizing
+        """
         if event.button() == Qt.LeftButton and self._resize_corner:
             self._is_resizing = True
             self._start_mouse_pos = event.scenePos()
@@ -136,6 +145,9 @@ class RefItem(QGraphicsPixmapItem):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        """
+        处理鼠标移动事件，执行调整大小 / Handle mouse move, perform resizing
+        """
         if self._is_resizing:
             current_mouse_pos = event.scenePos()
             
@@ -161,6 +173,9 @@ class RefItem(QGraphicsPixmapItem):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """
+        处理鼠标释放事件，结束调整大小 / Handle mouse release, finish resizing
+        """
         if self._is_resizing:
             self._is_resizing = False
             self._resize_corner = None
@@ -175,6 +190,9 @@ class RefItem(QGraphicsPixmapItem):
             super().mouseReleaseEvent(event)
 
     def apply_scale_with_anchor(self, new_scale):
+        """
+        应用缩放并保持锚点固定 / Apply scale and keep anchor fixed
+        """
         self.setScale(new_scale)
         
         # Re-position to keep anchor fixed
@@ -251,18 +269,27 @@ class RefView(QGraphicsView):
         self._space_pressed = False
 
     def dragEnterEvent(self, event: QDragEnterEvent):
+        """
+        处理拖拽进入事件 / Handle drag enter event
+        """
         if event.mimeData().hasUrls() or event.mimeData().hasImage():
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
+        """
+        处理拖拽移动事件 / Handle drag move event
+        """
         if event.mimeData().hasUrls() or event.mimeData().hasImage():
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
 
     def dropEvent(self, event: QDropEvent):
+        """
+        处理拖拽放下事件 / Handle drop event
+        """
         mime_data = event.mimeData()
         pos = self.mapToScene(event.position().toPoint())
         
@@ -282,6 +309,9 @@ class RefView(QGraphicsView):
             event.acceptProposedAction()
 
     def drawBackground(self, painter, rect):
+        """
+        绘制背景和网格 / Draw background and grid
+        """
         painter.fillRect(rect, Config.bg_color)
         
         if Config.grid_enabled:

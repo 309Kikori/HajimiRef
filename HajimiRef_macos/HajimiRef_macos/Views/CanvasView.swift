@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Window Accessor & Event Monitor
+
 struct WindowAccessor: NSViewRepresentable {
     @Environment(AppState.self) var appState
     
@@ -162,6 +163,8 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+// MARK: - Canvas View
+
 struct CanvasView: View {
     @Environment(AppState.self) var appState
     
@@ -270,7 +273,7 @@ struct CanvasView: View {
         // 画布变换参数
         let offset = appState.canvasOffset
         let scale = appState.canvasScale
-        let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+        _ = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
         
         var newSelection = Set<UUID>()
         
@@ -397,6 +400,8 @@ struct CanvasView: View {
         }
     }
 }
+
+// MARK: - Image View
 
 struct ImageView: View {
     @Environment(AppState.self) var appState
@@ -709,6 +714,8 @@ struct ImageView: View {
             }
     }
 }
+
+// MARK: - Resize Handle
 
 // [视觉设计] 调整大小手柄组件
 struct ResizeHandle: View {

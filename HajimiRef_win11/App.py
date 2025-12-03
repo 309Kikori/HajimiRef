@@ -1,3 +1,7 @@
+"""
+Hajimi Ref (Windows) - Main Application Entry Point
+"""
+
 import sys
 import os
 from PySide6.QtWidgets import QApplication

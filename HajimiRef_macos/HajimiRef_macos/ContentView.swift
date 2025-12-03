@@ -2,9 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    // MARK: - Properties
+    
     @Environment(AppState.self) var appState
     
     init() {}
+    
+    // MARK: - Body
     
     var body: some View {
         // [视觉设计] 主应用程序容器
@@ -32,6 +36,8 @@ struct ContentView: View {
                 return true
             }
     }
+    
+    // MARK: - Methods
     
     private func loadImages(from providers: [NSItemProvider]) {
         for provider in providers {

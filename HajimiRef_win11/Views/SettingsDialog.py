@@ -2,13 +2,22 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from Config import Config, tr
 
 class SettingsDialog(QDialog):
+    """
+    设置对话框类 / Settings dialog class
+    """
     def __init__(self, parent=None):
+        """
+        初始化设置对话框 / Initialize settings dialog
+        """
         super().__init__(parent)
         self.setWindowTitle(tr("preferences"))
         self.resize(400, 300)
         self.setup_ui()
 
     def setup_ui(self):
+        """
+        设置 UI 布局和控件 / Setup UI layout and widgets
+        """
         main_layout = QVBoxLayout(self)
         
         self.tabs = QTabWidget()
@@ -97,9 +106,15 @@ class SettingsDialog(QDialog):
         main_layout.addLayout(btn_layout)
 
     def update_color_btn(self, btn, color):
+        """
+        更新颜色按钮样式 / Update color button style
+        """
         btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
 
     def pick_bg_color(self):
+        """
+        选择背景颜色 / Pick background color
+        """
         color = QColorDialog.getColor(Config.bg_color, self, tr("pick_color"))
         if color.isValid():
             Config.bg_color = color
@@ -107,6 +122,9 @@ class SettingsDialog(QDialog):
             self.parent().view.viewport().update()
 
     def pick_grid_color(self):
+        """
+        选择网格颜色 / Pick grid color
+        """
         color = QColorDialog.getColor(Config.grid_color, self, tr("pick_color"))
         if color.isValid():
             Config.grid_color = color
@@ -114,14 +132,23 @@ class SettingsDialog(QDialog):
             self.parent().view.viewport().update()
 
     def set_grid_size(self, val):
+        """
+        设置网格大小 / Set grid size
+        """
         Config.grid_size = val
         self.parent().view.viewport().update()
 
     def set_grid_enabled(self, val):
+        """
+        设置是否显示网格 / Set grid enabled
+        """
         Config.grid_enabled = val
         self.parent().view.viewport().update()
         
     def change_language(self, index):
+        """
+        更改语言 / Change language
+        """
         lang_code = self.combo_lang.itemData(index)
         Config.language = lang_code
         # Notify parent to update UI text if needed, or just rely on restart/reopen
@@ -134,6 +161,9 @@ class SettingsDialog(QDialog):
             self.tabs.setTabText(1, tr("language"))
 
     def reset_defaults(self):
+        """
+        重置为默认设置 / Reset to defaults
+        """
         Config.reset_defaults()
         # Update UI elements
         self.update_color_btn(self.btn_bg_color, Config.bg_color)

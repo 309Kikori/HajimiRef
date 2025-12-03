@@ -1,3 +1,7 @@
+"""
+Localization strings for the application.
+"""
+
 LANGUAGES = {
     "en": {
         "title": "SimpleRef (GPU Accelerated)",

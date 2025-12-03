@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
         self.view.customContextMenuRequested.connect(self.show_context_menu)
 
     def show_settings(self):
+        """
+        显示设置对话框 / Show settings dialog
+        """
         dlg = SettingsDialog(self)
         dlg.exec()
 

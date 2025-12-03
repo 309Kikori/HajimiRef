@@ -5,6 +5,7 @@ import SwiftUI
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general = "General"
     case other = "Other"
+    case help = "Help"
     
     var id: String { self.rawValue }
     
@@ -12,6 +13,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gear"
         case .other: return "ellipsis.circle"
+        case .help: return "questionmark.circle"
         }
     }
 }
@@ -42,6 +44,8 @@ struct SettingsView: View {
                 GeneralSettingsView()
             case .other:
                 OtherSettingsView()
+            case .help:
+                HelpView()
             case .none:
                 Text("Select an option")
             }

@@ -1,0 +1,60 @@
+"""
+Localization strings for the application.
+"""
+
+LANGUAGES = {
+    "en": {
+        "title": "SimpleRef (GPU Accelerated)",
+        "file": "File",
+        "open_image": "Add Images",
+        "save_board": "Save Board",
+        "load_board": "Load Board",
+        "clear_board": "Clear Board",
+        "settings": "Settings",
+        "language": "Language",
+        "always_on_top": "Always on Top",
+        "help": "Help",
+        "about": "About",
+        "exit": "Exit",
+        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Ctrl + Wheel: Scale Image\n- Delete: Remove Image",
+        "error": "Error",
+        "save_error": "Failed to save file: {}",
+        "load_error": "Failed to load file: {}",
+        "appearance": "Appearance",
+        "bg_color": "Background Color",
+        "grid_color": "Grid Color",
+        "grid_size": "Grid Size",
+        "show_grid": "Show Grid",
+        "pick_color": "Pick Color",
+        "ok": "OK",
+        "cancel": "Cancel",
+        "preferences": "Preferences"
+    },
+    "zh_cn": {
+        "title": "SimpleRef (GPU 加速版)",
+        "file": "文件",
+        "open_image": "添加图片",
+        "save_board": "保存看板",
+        "load_board": "读取看板",
+        "clear_board": "清空看板",
+        "settings": "设置",
+        "language": "语言",
+        "always_on_top": "始终置顶",
+        "help": "帮助",
+        "about": "关于",
+        "exit": "退出",
+        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Ctrl + 滚轮: 缩放选中图片\n- Delete: 删除图片",
+        "error": "错误",
+        "save_error": "保存文件失败: {}",
+        "load_error": "读取文件失败: {}",
+        "appearance": "外观",
+        "bg_color": "背景颜色",
+        "grid_color": "网格颜色",
+        "grid_size": "网格大小",
+        "show_grid": "显示网格",
+        "pick_color": "选择颜色",
+        "ok": "确定",
+        "cancel": "取消",
+        "preferences": "首选项"
+    }
+}

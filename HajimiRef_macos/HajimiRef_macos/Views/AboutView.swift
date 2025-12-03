@@ -28,7 +28,7 @@ struct AboutView: View {
                     .font(.system(size: 16, weight: .bold)) // 中号粗体字，作为副标题
                 
                 // 版本号信息
-                Text("Version 2.0.0 (macOS Native)")
+                Text("Version 0.0.2 (macOS Native)")
                     .font(.subheadline) // 使用系统副标题样式
                     .foregroundColor(.secondary) // 使用次级文本颜色（通常是灰色），降低视觉权重
                 

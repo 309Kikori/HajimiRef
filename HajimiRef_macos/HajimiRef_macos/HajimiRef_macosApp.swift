@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 
+// MARK: - App Delegate
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ensure the app is a regular app (appears in Dock, has menu bar)
@@ -18,6 +20,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - App Entry Point
+
 @main
 struct HajimiRef_macosApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -26,6 +30,8 @@ struct HajimiRef_macosApp: App {
     // [国际化] 语言设置
     // 默认使用系统语言 (nil)，用户可以在设置中覆盖。
     @AppStorage("appLanguage") private var appLanguage: String = "system"
+
+    // MARK: - Scene
 
     var body: some Scene {
         WindowGroup {

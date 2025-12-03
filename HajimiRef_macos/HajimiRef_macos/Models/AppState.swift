@@ -12,6 +12,18 @@ class AppState {
     var canvasScale: CGFloat = 1.0
     var selectedImageIds: Set<UUID> = []
     
+    // [交互状态] 临时拖拽偏移
+    // 用于在拖拽过程中实时更新所有选中图片的位置，而不需要频繁提交到 images 数组。
+    var currentDragOffset: CGSize = .zero
+    
+    // [交互状态] 多选缩放因子
+    // 用于在调整大小时实时预览所有选中图片的缩放效果。
+    var multiSelectScaleFactor: CGFloat = 1.0
+    
+    // [交互状态] 多选缩放锚点
+    // 用于在调整大小时确定缩放中心。
+    var multiSelectAnchor: CGPoint = .zero
+    
     var isAlwaysOnTop: Bool = false {
         didSet {
             updateWindowLevel()
@@ -301,6 +313,10 @@ class AppState {
                                 DispatchQueue.main.async {
                                     // Update the image data in place
                                     self.images[index].data = base64
+                                    // [Bug Fix] 必须同时更新缓存，否则视图会继续显示旧图片
+                                    if let d = Data(base64Encoded: base64) {
+                                        self.images[index]._cachedImage = NSImage(data: d)
+                                    }
                                 }
                             }
                         }

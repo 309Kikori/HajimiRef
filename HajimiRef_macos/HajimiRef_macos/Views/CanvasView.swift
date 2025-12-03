@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Window Accessor & Event Monitor
+
 struct WindowAccessor: NSViewRepresentable {
     @Environment(AppState.self) var appState
     
@@ -162,6 +163,8 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+// MARK: - Canvas View
+
 struct CanvasView: View {
     @Environment(AppState.self) var appState
     
@@ -270,7 +273,7 @@ struct CanvasView: View {
         // 画布变换参数
         let offset = appState.canvasOffset
         let scale = appState.canvasScale
-        let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+        _ = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
         
         var newSelection = Set<UUID>()
         
@@ -339,11 +342,15 @@ struct CanvasView: View {
                 let x1 = p.x - frameWidth / 2
                 let y1 = p.y - frameHeight / 2
                 
-                let x2 = x1 - offset.width
-                let y2 = y1 - offset.height
+                // Inverse Transform:
+                // Screen = Center + (World + Offset - Center) * Scale
+                // World = (Screen - Center) / Scale - Offset + Center
                 
-                let x3 = x2 / scale
-                let y3 = y2 / scale
+                let x2 = x1 / scale
+                let y2 = y1 / scale
+                
+                let x3 = x2 - offset.width
+                let y3 = y2 - offset.height
                 
                 let x4 = x3 + frameWidth / 2
                 let y4 = y3 + frameHeight / 2
@@ -394,17 +401,46 @@ struct CanvasView: View {
     }
 }
 
+// MARK: - Image View
+
 struct ImageView: View {
     @Environment(AppState.self) var appState
     var imageEntity: ImageEntity
     
     // Local state for gestures
-    @State private var dragOffset: CGSize = .zero
+    // 注意：dragOffset 现在只用于 resizeGesture。
+    // 移动图片的 dragOffset 已经移至 AppState.currentDragOffset 以支持多选移动。
     @State private var zoomScale: CGFloat = 1.0
     @State private var rotationAngle: Angle = .zero
     
+    // [交互状态] 初始边界缓存
+    // 用于在拖拽开始时记录整个选择集的边界，以便计算缩放锚点。
+    @State private var initialSelectionBounds: CGRect? = nil
+    
     var isSelected: Bool {
         appState.selectedImageIds.contains(imageEntity.id)
+    }
+    
+    // [交互逻辑] 计算显示位置
+    // 将多选缩放和拖拽的临时状态应用到位置计算中。
+    private var displayPosition: CGPoint {
+        let currentOffset = isSelected ? appState.currentDragOffset : .zero
+        
+        // 默认位置 (应用拖拽偏移)
+        var x = imageEntity.x + currentOffset.width
+        var y = imageEntity.y + currentOffset.height
+        
+        // 应用多选缩放 (相对于锚点)
+        if isSelected && appState.multiSelectScaleFactor != 1.0 {
+            let anchor = appState.multiSelectAnchor
+            // NewPos = Anchor + (OldPos - Anchor) * Factor
+            // 注意：这里的 OldPos 应该是原始位置 (imageEntity.x/y)，因为缩放是基于原始状态计算的。
+            // 拖拽偏移 (currentOffset) 在缩放时通常为 0，除非同时进行（这在当前交互中是不可能的）。
+            x = anchor.x + (imageEntity.x - anchor.x) * appState.multiSelectScaleFactor
+            y = anchor.y + (imageEntity.y - anchor.y) * appState.multiSelectScaleFactor
+        }
+        
+        return CGPoint(x: x, y: y)
     }
     
     var body: some View {
@@ -449,26 +485,51 @@ struct ImageView: View {
                         }
                     }
                 )
-                .scaleEffect(imageEntity.scale * zoomScale)
+                .scaleEffect(imageEntity.scale * zoomScale * (isSelected ? appState.multiSelectScaleFactor : 1.0))
                 .rotationEffect(Angle(degrees: imageEntity.rotation) + rotationAngle)
-                .position(x: imageEntity.x + dragOffset.width, y: imageEntity.y + dragOffset.height)
+                .position(displayPosition)
                 // Gestures
                 .gesture(
                     SimultaneousGesture(
                         // Drag to Move
-                        DragGesture()
+                        // [交互优化] 使用全局坐标系 (Canvas)
+                        // 避免使用 .local，因为手势过程中视图本身的位置会发生变化，导致坐标系不稳定（闪烁/不跟手）。
+                        DragGesture(coordinateSpace: .named("Canvas"))
                             .onChanged { value in
-                                dragOffset = value.translation
+                                // [交互逻辑] 多选移动支持
+                                // 1. 如果拖拽的是未选中的图片，且没有按 Shift，则单选它。
                                 if !isSelected {
-                                    appState.selectedImageIds = [imageEntity.id]
+                                    if !NSEvent.modifierFlags.contains(.shift) {
+                                        appState.selectedImageIds = [imageEntity.id]
+                                    } else {
+                                        appState.selectedImageIds.insert(imageEntity.id)
+                                    }
                                 }
+                                
+                                // 2. 更新全局拖拽偏移 (除以 canvasScale 以适应缩放)
+                                // 注意：value.translation 是屏幕像素 (Canvas Space)，需要转换为世界坐标增量。
+                                appState.currentDragOffset = CGSize(
+                                    width: value.translation.width / appState.canvasScale,
+                                    height: value.translation.height / appState.canvasScale
+                                )
                             }
                             .onEnded { value in
-                                if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
-                                    appState.images[index].x += value.translation.width
-                                    appState.images[index].y += value.translation.height
+                                // 3. 提交移动
+                                // 将偏移量应用到所有选中的图片
+                                let finalOffset = CGSize(
+                                    width: value.translation.width / appState.canvasScale,
+                                    height: value.translation.height / appState.canvasScale
+                                )
+                                
+                                for id in appState.selectedImageIds {
+                                    if let index = appState.images.firstIndex(where: { $0.id == id }) {
+                                        appState.images[index].x += finalOffset.width
+                                        appState.images[index].y += finalOffset.height
+                                    }
                                 }
-                                dragOffset = .zero
+                                
+                                // 4. 重置全局偏移
+                                appState.currentDragOffset = .zero
                             }
                         ,
                         SimultaneousGesture(
@@ -499,7 +560,16 @@ struct ImageView: View {
                     )
                 )
                 .onTapGesture {
-                    appState.selectedImageIds = [imageEntity.id]
+                    // [交互逻辑] Shift 多选 / 反选
+                    if NSEvent.modifierFlags.contains(.shift) {
+                        if isSelected {
+                            appState.selectedImageIds.remove(imageEntity.id)
+                        } else {
+                            appState.selectedImageIds.insert(imageEntity.id)
+                        }
+                    } else {
+                        appState.selectedImageIds = [imageEntity.id]
+                    }
                 }
                 .contextMenu {
                     Button(LocalizedStringKey("Smart Sort")) {
@@ -542,65 +612,110 @@ struct ImageView: View {
         // 避免使用 .local，因为手势过程中视图本身的大小和位置会发生变化，导致坐标系不稳定（闪烁）。
         DragGesture(minimumDistance: 1, coordinateSpace: .named("Canvas"))
             .onChanged { value in
-                // 1. 计算当前图片的实际显示尺寸 (在缩放前)
-                let currentWidth = originalSize.width * imageEntity.scale
-                let currentHeight = originalSize.height * imageEntity.scale
+                // 1. 初始化：计算初始边界和锚点
+                if initialSelectionBounds == nil {
+                    if let bounds = appState.calculateSelectionBounds() {
+                        initialSelectionBounds = bounds
+                        
+                        // 根据手柄位置确定锚点 (Anchor)
+                        // 锚点是手柄的对角点
+                        switch handle {
+                        case .bottomTrailing: // Dragging Bottom-Right -> Anchor is Top-Left
+                            appState.multiSelectAnchor = CGPoint(x: bounds.minX, y: bounds.minY)
+                        case .topLeading: // Dragging Top-Left -> Anchor is Bottom-Right
+                            appState.multiSelectAnchor = CGPoint(x: bounds.maxX, y: bounds.maxY)
+                        case .topTrailing: // Dragging Top-Right -> Anchor is Bottom-Left
+                            appState.multiSelectAnchor = CGPoint(x: bounds.minX, y: bounds.maxY)
+                        case .bottomLeading: // Dragging Bottom-Left -> Anchor is Top-Right
+                            appState.multiSelectAnchor = CGPoint(x: bounds.maxX, y: bounds.minY)
+                        default:
+                            appState.multiSelectAnchor = CGPoint(x: bounds.midX, y: bounds.midY)
+                        }
+                    }
+                }
                 
-                // 2. 根据手柄确定拖拽增量 (Delta)
-                // [交互优化] 坐标转换
-                // value.translation 是屏幕像素。我们需要除以 canvasScale 才能得到画布世界坐标系中的增量。
-                let canvasScale = appState.canvasScale
-                var delta: CGFloat = 0
+                guard let bounds = initialSelectionBounds else { return }
+                let anchor = appState.multiSelectAnchor
                 
+                // 2. 计算缩放倍率 (k)
+                // 我们需要计算手柄相对于锚点的当前距离与初始距离的比率。
+                
+                // 初始手柄位置 (Handle Start Position)
+                // 注意：这里我们使用 bounds 的角点作为手柄的逻辑位置，这比使用单个图片的角点更准确，
+                // 因为我们是在缩放整个 Selection Box。
+                var startHandlePoint: CGPoint = .zero
                 switch handle {
-                case .bottomTrailing, .topTrailing:
-                    delta = value.translation.width / canvasScale
-                case .topLeading, .bottomLeading:
-                    delta = -value.translation.width / canvasScale
+                case .bottomTrailing: startHandlePoint = CGPoint(x: bounds.maxX, y: bounds.maxY)
+                case .topLeading:     startHandlePoint = CGPoint(x: bounds.minX, y: bounds.minY)
+                case .topTrailing:    startHandlePoint = CGPoint(x: bounds.maxX, y: bounds.minY)
+                case .bottomLeading:  startHandlePoint = CGPoint(x: bounds.minX, y: bounds.maxY)
                 default: break
                 }
                 
-                // 3. 计算缩放倍率 (k)
-                // k 是相对于当前尺寸的倍率。
-                // 新尺寸 = 旧尺寸 + delta
-                // k = (旧尺寸 + delta) / 旧尺寸 = 1 + delta / 旧尺寸
-                let k = max(0.1, 1.0 + delta / currentWidth)
+                // 当前手柄位置 (Current Handle Position)
+                // value.translation 是累积的拖拽距离 (Canvas Space)
+                // 注意：value.translation 需要除以 canvasScale 才是世界坐标增量
+                let deltaX = value.translation.width / appState.canvasScale
+                let deltaY = value.translation.height / appState.canvasScale
                 
-                self.zoomScale = k
+                let currentHandlePoint = CGPoint(x: startHandlePoint.x + deltaX,
+                                                 y: startHandlePoint.y + deltaY)
                 
-                // 4. 计算中心点偏移 (Offset)
-                // 当我们以左上角为锚点放大 k 倍时，中心点会向右下移动。
-                // 偏移量 = (k - 1) * (宽/2, 高/2)
+                // 计算距离 (投影到 X 轴或 Y 轴，取较大的变化量以保持比例，或者简单地使用 X 轴)
+                // 为了简单且稳定，我们使用 X 轴距离比率，除非 X 轴距离太小。
+                let startDistX = abs(startHandlePoint.x - anchor.x)
+                let currentDistX = abs(currentHandlePoint.x - anchor.x)
                 
-                let wOffset = (k - 1) * currentWidth / 2
-                let hOffset = (k - 1) * currentHeight / 2
+                let startDistY = abs(startHandlePoint.y - anchor.y)
+                let currentDistY = abs(currentHandlePoint.y - anchor.y)
                 
-                switch handle {
-                case .bottomTrailing: // 锚点：左上 (Top-Left) -> 中心向右下移
-                    self.dragOffset = CGSize(width: wOffset, height: hOffset)
-                case .topLeading: // 锚点：右下 (Bottom-Right) -> 中心向左上移
-                    self.dragOffset = CGSize(width: -wOffset, height: -hOffset)
-                case .topTrailing: // 锚点：左下 (Bottom-Left) -> 中心向右上移
-                    self.dragOffset = CGSize(width: wOffset, height: -hOffset)
-                case .bottomLeading: // 锚点：右上 (Top-Right) -> 中心向左下移
-                    self.dragOffset = CGSize(width: -wOffset, height: hOffset)
-                default: break
+                var k: CGFloat = 1.0
+                
+                if startDistX > 10 {
+                    k = currentDistX / startDistX
+                } else if startDistY > 10 {
+                    k = currentDistY / startDistY
                 }
+                
+                // 限制最小缩放
+                k = max(0.1, k)
+                
+                // [交互逻辑] 多选缩放支持
+                // 更新全局缩放因子，让所有选中的图片都能实时预览缩放效果。
+                appState.multiSelectScaleFactor = k
             }
             .onEnded { value in
                 // 5. 提交更改
                 // 将临时的 zoomScale 和 dragOffset 应用到实体属性中。
-                if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
-                    appState.images[index].scale *= zoomScale
-                    appState.images[index].x += dragOffset.width
-                    appState.images[index].y += dragOffset.height
+                // [交互逻辑] 多选缩放提交
+                // 遍历所有选中的图片，应用缩放因子。
+                let anchor = appState.multiSelectAnchor
+                let k = appState.multiSelectScaleFactor
+                
+                for id in appState.selectedImageIds {
+                    if let index = appState.images.firstIndex(where: { $0.id == id }) {
+                        // 1. 更新缩放
+                        appState.images[index].scale *= k
+                        
+                        // 2. 更新位置 (相对于锚点缩放)
+                        // NewPos = Anchor + (OldPos - Anchor) * k
+                        let oldX = appState.images[index].x
+                        let oldY = appState.images[index].y
+                        
+                        appState.images[index].x = anchor.x + (oldX - anchor.x) * k
+                        appState.images[index].y = anchor.y + (oldY - anchor.y) * k
+                    }
                 }
+                
                 // 重置临时状态
                 zoomScale = 1.0
-                dragOffset = .zero
+                appState.multiSelectScaleFactor = 1.0
+                initialSelectionBounds = nil
             }
     }
 }
+
+// MARK: - Resize Handle
 
 // [视觉设计] 调整大小手柄组件
 struct ResizeHandle: View {

@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
         初始化主窗口，设置场景、视图、菜单和快捷键 / Initialize main window, set scene, view, menu and shortcuts
         """
         super().__init__()
-        self.setWindowTitle(tr("title"))
+        self.setWindowTitle("HajimiRef") # 设置主窗口标题 / Set main window title
         self.resize(1024, 768)
         
         self.vm = MainViewModel()
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         切换语言 / Change language
         """
         Config.language = lang
-        self.setWindowTitle(tr("title"))
+        self.setWindowTitle("HajimiRef") # 更新主窗口标题 / Update main window title
         # Rebuild menu is complex in Qt dynamic, simpler to just restart or update texts.
         # For simplicity, we just update title and let user restart or re-open menus.
         # A full reload would require clearing menuBar and calling setup_menu again.

@@ -28,7 +28,9 @@ LANGUAGES = {
         "pick_color": "Pick Color",
         "ok": "OK",
         "cancel": "Cancel",
-        "preferences": "Preferences"
+        "preferences": "Preferences",
+        "reset_defaults": "Reset Defaults",
+        "organize_items": "Smart Organize"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -55,6 +57,8 @@ LANGUAGES = {
         "pick_color": "选择颜色",
         "ok": "确定",
         "cancel": "取消",
-        "preferences": "首选项"
+        "preferences": "首选项",
+        "reset_defaults": "恢复默认",
+        "organize_items": "智能整理"
     }
 }

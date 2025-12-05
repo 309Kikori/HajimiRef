@@ -25,7 +25,7 @@ class SettingsDialog(QDialog):
         
         # --- Tab 1: Appearance ---
         tab_appearance = QWidget()
-        self.tabs.addTab(tab_appearance, tr("preferences")) # Using "preferences" as tab name for now or "Appearance"
+        self.tabs.addTab(tab_appearance, tr("appearance"))
         
         layout_app = QVBoxLayout(tab_appearance)
 
@@ -93,7 +93,7 @@ class SettingsDialog(QDialog):
         # --- Bottom Buttons ---
         btn_layout = QHBoxLayout()
         
-        btn_reset = QPushButton(tr("reset_defaults") if "reset_defaults" in tr("reset_defaults") else "Reset Defaults") # Fallback if key missing
+        btn_reset = QPushButton(tr("reset_defaults"))
         btn_reset.clicked.connect(self.reset_defaults)
         btn_layout.addWidget(btn_reset)
         

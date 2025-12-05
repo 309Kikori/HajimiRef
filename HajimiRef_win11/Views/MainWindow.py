@@ -2,8 +2,10 @@ import sys
 import os
 import json
 import base64
+import math
+from rectpack import newPacker
 from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
-from PySide6.QtCore import Qt, QByteArray, QBuffer
+from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF
 from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence
 from Config import Config, tr
 from Views.Canvas import RefItem, RefView
@@ -133,11 +135,87 @@ class MainWindow(QMainWindow):
         显示右键菜单 / Show context menu
         """
         menu = QMenu(self)
+        
+        # 仅当有选中的项目时，才显示“智能整理”选项
+        selected_items = self.scene.selectedItems()
+        if selected_items:
+            menu.addAction(tr("organize_items"), lambda: self.organize_items(selected_items))
+            menu.addSeparator()
+
         menu.addAction(tr("open_image"), self.add_images)
         menu.addSeparator()
         menu.addAction(tr("save_board"), self.save_board)
         menu.addAction(tr("load_board"), self.load_board)
         menu.exec(self.view.mapToGlobal(pos))
+
+    def organize_items(self, items):
+        """
+        使用 rectpack 进行紧凑的无重叠放置。
+        - items: list of QGraphicsItems (RefItem)
+        算法步骤：
+        1) 快照每个项的 sceneBoundingRect 大小并向上取整为整数。
+        2) 使用 rectpack 计算紧凑布局（无需手写网格逻辑）。
+        3) 将 rectpack 返回的坐标转换为场景坐标并应用到每个 item。
+        此实现尽量保留原始选区的左上角作为偏移基准。
+        """
+        if not items:
+            return
+
+        # 1) 预快照尺寸并建立映射
+        rects = []  # list of (w,h, item, orig_rect)
+        total_area = 0
+        for item in items:
+            r = item.sceneBoundingRect()
+            w = max(1, int(math.ceil(r.width())))
+            h = max(1, int(math.ceil(r.height())))
+            rects.append((w, h, item, r))
+            total_area += w * h
+
+        # 2) 选择一个合理的容器宽度：基于总面积取平方根再放大一些作为容器宽
+        approx_side = int(math.ceil(math.sqrt(total_area)))
+        bin_width = max(approx_side, max(w for w, h, it, r in rects))
+        # 高度给足，防止放不下
+        bin_height = int(math.ceil(total_area / bin_width)) + max(h for w, h, it, r in rects) * 2
+
+        # 3) 使用 rectpack 计算布局
+        # 不指定 mode，使用默认算法，避免 AttributeError
+        packer = newPacker()
+        # 添加一个大箱子（足够装下所有矩形）
+        packer.add_bin(bin_width, bin_height)
+        for w, h, it, r in rects:
+            packer.add_rect(w, h, rid=id(it))
+        packer.pack()
+
+        # 4) 获取包装结果
+        # packer 是可迭代的，包含所有 bin。每个 bin 也是可迭代的，包含所有 rect。
+
+        # 5) 计算原始选区左上角偏移
+        group_rect = QRectF()
+        for _, _, it, r in rects:
+            group_rect = group_rect.united(r)
+        start_x, start_y = group_rect.topLeft().x(), group_rect.topLeft().y()
+
+        # 6) 应用坐标
+        id_map = {id(it): it for _, _, it, r in rects}
+        
+        # 遍历所有箱子 (bins)
+        for bin in packer:
+            # 遍历箱子里的所有矩形 (rectangles)
+            for rect in bin:
+                # rect 对象包含 x, y, width, height, rid
+                item = id_map.get(rect.rid)
+                if item is None:
+                    continue
+                
+                target_x = start_x + float(rect.x)
+                target_y = start_y + float(rect.y)
+
+                # 为了将 item 的 sceneBoundingRect.topLeft() 对齐到 (target_x, target_y)，计算 delta
+                cur_rect = item.sceneBoundingRect()
+                cur_tl = cur_rect.topLeft()
+                dx = target_x - cur_tl.x()
+                dy = target_y - cur_tl.y()
+                item.setPos(item.pos() + QPointF(dx, dy))
 
     def add_images(self):
         """

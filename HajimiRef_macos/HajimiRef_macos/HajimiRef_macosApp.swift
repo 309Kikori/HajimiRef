@@ -66,7 +66,7 @@ struct HajimiRef_macosApp: App {
             }
             
             // 文件菜单：保存/加载
-            // 添加“保存看板”和“加载看板”命令以进行项目管理。
+            // 添加"保存看板"和"加载看板"命令以进行项目管理。
             // 快捷键：Cmd + S, Cmd + L
             CommandGroup(after: .saveItem) {
                 Button(LocalizedStringKey("Save Board...")) {
@@ -78,8 +78,14 @@ struct HajimiRef_macosApp: App {
                     appState.loadBoard()
                 }
                 .keyboardShortcut("l", modifiers: .command)
-            }
-            
+                
+                Divider()
+                
+                Button(LocalizedStringKey("Export as Image...")) {
+                    appState.exportBoardAsImage()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+            }            
             // 视图菜单：窗口行为
             // 添加一个切换开关以保持窗口“始终置顶”。
             // 这是参考软件的一项关键功能，允许艺术家在另一个应用程序

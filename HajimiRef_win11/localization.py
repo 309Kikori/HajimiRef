@@ -30,7 +30,13 @@ LANGUAGES = {
         "cancel": "Cancel",
         "preferences": "Preferences",
         "reset_defaults": "Reset Defaults",
-        "organize_items": "Smart Organize"
+        "organize_items": "Smart Organize",
+        "export_image": "Export as Image",
+        "warning": "Warning",
+        "no_images_to_export": "No images on the canvas to export.",
+        "success": "Success",
+        "export_success": "Board exported successfully to:\n{}",
+        "export_error": "Failed to export image."
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -59,6 +65,12 @@ LANGUAGES = {
         "cancel": "取消",
         "preferences": "首选项",
         "reset_defaults": "恢复默认",
-        "organize_items": "智能整理"
+        "organize_items": "智能整理",
+        "export_image": "导出为图片",
+        "warning": "警告",
+        "no_images_to_export": "画布上没有可导出的图片。",
+        "success": "成功",
+        "export_success": "画布已成功导出至:\n{}",
+        "export_error": "导出图片失败。"
     }
 }

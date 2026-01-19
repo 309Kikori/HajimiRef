@@ -6,7 +6,7 @@ import math
 from rectpack import newPacker
 from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF
-from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence
+from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter
 from Config import Config, tr
 from Views.Canvas import RefItem, RefView
 from Views.SettingsDialog import SettingsDialog
@@ -62,6 +62,12 @@ class MainWindow(QMainWindow):
         act_load = QAction(tr("load_board"), self)
         act_load.triggered.connect(self.load_board)
         file_menu.addAction(act_load)
+        
+        file_menu.addSeparator()
+        
+        act_export = QAction(tr("export_image"), self)
+        act_export.triggered.connect(self.export_board_to_image)
+        file_menu.addAction(act_export)
         
         act_clear = QAction(tr("clear_board"), self)
         act_clear.triggered.connect(self.clear_board)
@@ -146,6 +152,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(tr("save_board"), self.save_board)
         menu.addAction(tr("load_board"), self.load_board)
+        menu.addSeparator()
+        menu.addAction(tr("export_image"), self.export_board_to_image)
         menu.exec(self.view.mapToGlobal(pos))
 
     def organize_items(self, items):
@@ -249,7 +257,7 @@ class MainWindow(QMainWindow):
             data = ba.data()
             self.create_item_from_data(data, x, y)
 
-    def create_item_from_data(self, data, x, y, scale=1.0):
+    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0):
         """
         从二进制数据创建图片项 / Create image item from binary data
         """
@@ -258,6 +266,7 @@ class MainWindow(QMainWindow):
             item = RefItem(pixmap, data)
             item.setPos(x, y)
             item.setScale(scale)
+            item.setRotation(rotation)
             self.scene.addItem(item)
         else:
             print("Failed to load pixmap from data")
@@ -329,6 +338,74 @@ class MainWindow(QMainWindow):
         if not success:
             QMessageBox.critical(self, tr("error"), tr("save_error").format(error))
 
+    def export_board_to_image(self):
+        """
+        导出画布为图片 / Export board as image
+        """
+        # 获取场景中所有内容的边界矩形
+        items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        if not items:
+            QMessageBox.warning(self, tr("warning"), tr("no_images_to_export"))
+            return
+        
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            QMessageBox.warning(self, tr("warning"), tr("no_images_to_export"))
+            return
+        
+        # 添加一些边距
+        margin = 20
+        rect = rect.adjusted(-margin, -margin, margin, margin)
+        
+        # 弹出文件保存对话框
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, 
+            tr("export_image"), 
+            "", 
+            "PNG Image (*.png);;JPEG Image (*.jpg);;BMP Image (*.bmp)"
+        )
+        if not path:
+            return
+        
+        # 根据文件扩展名确定格式
+        if not (path.lower().endswith('.png') or path.lower().endswith('.jpg') or 
+                path.lower().endswith('.jpeg') or path.lower().endswith('.bmp')):
+            if 'PNG' in selected_filter:
+                path += '.png'
+            elif 'JPEG' in selected_filter or 'JPG' in selected_filter:
+                path += '.jpg'
+            else:
+                path += '.bmp'
+        
+        # 创建足够大的 QImage
+        width = int(rect.width())
+        height = int(rect.height())
+        
+        # 根据格式选择透明背景或白色背景
+        if path.lower().endswith('.png'):
+            image = QImage(width, height, QImage.Format_ARGB32)
+            image.fill(Qt.transparent)
+        else:
+            image = QImage(width, height, QImage.Format_RGB32)
+            image.fill(Qt.white)
+        
+        # 使用 QPainter 将场景渲染到图片
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        # target: 目标绘制区域（整个图片）
+        # source: 场景中要渲染的区域
+        target = QRectF(0, 0, width, height)
+        self.scene.render(painter, target, rect)
+        painter.end()
+        
+        # 保存图片
+        if image.save(path):
+            QMessageBox.information(self, tr("success"), tr("export_success").format(path))
+        else:
+            QMessageBox.critical(self, tr("error"), tr("export_error"))
+
     def load_board(self):
         """
         从文件加载看板 / Load board from file
@@ -346,7 +423,8 @@ class MainWindow(QMainWindow):
                     img_data["data"], 
                     img_data["x"], 
                     img_data["y"],
-                    img_data["scale"]
+                    img_data["scale"],
+                    img_data.get("rotation", 0)
                 )
         else:
             QMessageBox.critical(self, tr("error"), tr("load_error").format(result))

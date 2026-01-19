@@ -33,3 +33,12 @@
 "Other" = "Other";
 "Smart Sort" = "Smart Sort";
 "Coming Soon..." = "Coming Soon...";
+
+/* Export */
+"Export as Image..." = "Export as Image...";
+"No Images" = "No Images";
+"There are no images on the canvas to export." = "There are no images on the canvas to export.";
+"Export Successful" = "Export Successful";
+"Board exported to:\n%@" = "Board exported to:\n%@";
+"Export Failed" = "Export Failed";
+"Failed to export the board as an image." = "Failed to export the board as an image.";

@@ -33,3 +33,12 @@
 "Other" = "其他";
 "Smart Sort" = "智能排序";
 "Coming Soon..." = "敬请期待...";
+
+/* Export */
+"Export as Image..." = "导出为图片...";
+"No Images" = "没有图片";
+"There are no images on the canvas to export." = "画布上没有可导出的图片。";
+"Export Successful" = "导出成功";
+"Board exported to:\n%@" = "画布已导出至:\n%@";
+"Export Failed" = "导出失败";
+"Failed to export the board as an image." = "无法将画布导出为图片。";

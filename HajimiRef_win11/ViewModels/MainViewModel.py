@@ -49,6 +49,7 @@ class MainViewModel:
                             "x": img_data.get("x", 0),
                             "y": img_data.get("y", 0),
                             "scale": img_data.get("scale", 1.0),
+                            "rotation": img_data.get("rotation", 0),
                             "data": img_bytes
                         })
                     except Exception as decode_err:

@@ -203,6 +203,163 @@ class AppState {
         }
     }
     
+    // MARK: - Export Board as Image (导出画布为图片)
+    
+    /// 计算图片旋转后的边界框
+    /// - Parameters:
+    ///   - width: 图片宽度
+    ///   - height: 图片高度
+    ///   - rotation: 旋转角度（度）
+    /// - Returns: 旋转后的边界框尺寸 (width, height)
+    private func rotatedBoundingBox(width: CGFloat, height: CGFloat, rotation: CGFloat) -> (CGFloat, CGFloat) {
+        let radians = rotation * .pi / 180.0
+        let cos = abs(Darwin.cos(radians))
+        let sin = abs(Darwin.sin(radians))
+        
+        let newWidth = width * cos + height * sin
+        let newHeight = width * sin + height * cos
+        
+        return (newWidth, newHeight)
+    }
+    
+    func exportBoardAsImage() {
+        guard !images.isEmpty else {
+            // 没有图片可导出
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("No Images", comment: "")
+            alert.informativeText = NSLocalizedString("There are no images on the canvas to export.", comment: "")
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        
+        // 计算所有图片的边界框（考虑旋转）
+        var minX: CGFloat = .greatestFiniteMagnitude
+        var minY: CGFloat = .greatestFiniteMagnitude
+        var maxX: CGFloat = -.greatestFiniteMagnitude
+        var maxY: CGFloat = -.greatestFiniteMagnitude
+        
+        for img in images {
+            let originalW = (img.nsImage?.size.width ?? 100) * img.scale
+            let originalH = (img.nsImage?.size.height ?? 100) * img.scale
+            
+            // 计算旋转后的边界框尺寸
+            let (rotatedW, rotatedH) = rotatedBoundingBox(width: originalW, height: originalH, rotation: img.rotation)
+            
+            let left = img.x - rotatedW/2
+            let right = img.x + rotatedW/2
+            let top = img.y - rotatedH/2
+            let bottom = img.y + rotatedH/2
+            
+            if left < minX { minX = left }
+            if right > maxX { maxX = right }
+            if top < minY { minY = top }
+            if bottom > maxY { maxY = bottom }
+        }
+        
+        // 添加边距
+        let margin: CGFloat = 20
+        minX -= margin
+        minY -= margin
+        maxX += margin
+        maxY += margin
+        
+        let width = maxX - minX
+        let height = maxY - minY
+        
+        // 弹出保存对话框
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png, .jpeg]
+        panel.nameFieldStringValue = "board_export.png"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            // 创建目标图片
+            let size = NSSize(width: width, height: height)
+            let image = NSImage(size: size)
+            
+            image.lockFocus()
+            
+            // 设置背景（PNG 为透明，其他格式为白色）
+            if url.pathExtension.lowercased() == "png" {
+                NSColor.clear.setFill()
+            } else {
+                NSColor.white.setFill()
+            }
+            NSRect(origin: .zero, size: size).fill()
+            
+            // 绘制每张图片
+            for img in images {
+                guard let nsImage = img.nsImage else { continue }
+                
+                let imgWidth = nsImage.size.width * img.scale
+                let imgHeight = nsImage.size.height * img.scale
+                
+                // 计算图片中心相对于导出图片的位置
+                let centerX = img.x - minX
+                let centerY = img.y - minY
+                
+                // 保存当前图形状态
+                NSGraphicsContext.saveGraphicsState()
+                
+                // 移动到图片中心点，应用旋转，然后绘制
+                let transform = NSAffineTransform()
+                transform.translateX(by: centerX, yBy: centerY)
+                transform.rotate(byDegrees: img.rotation)
+                transform.concat()
+                
+                // 绘制图片（以中心为原点）
+                nsImage.draw(in: NSRect(x: -imgWidth/2, y: -imgHeight/2, width: imgWidth, height: imgHeight),
+                            from: NSRect(origin: .zero, size: nsImage.size),
+                            operation: .sourceOver,
+                            fraction: 1.0)
+                
+                // 恢复图形状态
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            
+            image.unlockFocus()
+            
+            // 保存图片到文件
+            guard let tiffData = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiffData) else {
+                showExportError()
+                return
+            }
+            
+            var imageData: Data?
+            if url.pathExtension.lowercased() == "png" {
+                imageData = bitmap.representation(using: .png, properties: [:])
+            } else {
+                imageData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+            }
+            
+            guard let data = imageData else {
+                showExportError()
+                return
+            }
+            
+            do {
+                try data.write(to: url)
+                // 显示成功提示
+                let alert = NSAlert()
+                alert.messageText = NSLocalizedString("Export Successful", comment: "")
+                alert.informativeText = String(format: NSLocalizedString("Board exported to:\n%@", comment: ""), url.path)
+                alert.alertStyle = .informational
+                alert.runModal()
+            } catch {
+                showExportError()
+            }
+        }
+    }
+    
+    private func showExportError() {
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Export Failed", comment: "")
+        alert.informativeText = NSLocalizedString("Failed to export the board as an image.", comment: "")
+        alert.alertStyle = .critical
+        alert.runModal()
+    }
+    
     // MARK: - Window Management
     
     private func updateWindowLevel() {

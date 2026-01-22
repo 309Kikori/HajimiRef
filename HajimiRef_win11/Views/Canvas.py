@@ -315,7 +315,33 @@ class RefView(QGraphicsView):
         painter.fillRect(rect, Config.bg_color)
         
         if Config.grid_enabled:
-            grid_size = Config.grid_size
+            # 获取当前缩放级别 / Get current zoom level
+            view_scale = self.transform().m11()
+            
+            # 根据缩放级别动态调整网格间隔，限制最大点数 / Dynamically adjust grid spacing based on zoom level
+            # 目标：屏幕上网格点的间隔保持相对恒定（约20-40像素）
+            base_grid_size = Config.grid_size
+            
+            # 计算实际绘制的网格间隔 / Calculate actual grid spacing for drawing
+            # 当缩放很小时，增大间隔以减少点数
+            if view_scale < 1.0:
+                # 向上取整到 base_grid_size 的倍数
+                multiplier = max(1, int(1.0 / view_scale))
+                grid_size = base_grid_size * multiplier
+            else:
+                grid_size = base_grid_size
+            
+            # 限制最大绘制点数（防止极端情况） / Limit max points to prevent extreme cases
+            max_points = 10000
+            width = rect.width()
+            height = rect.height()
+            estimated_points = (width / grid_size) * (height / grid_size)
+            
+            if estimated_points > max_points:
+                # 进一步增大间隔 / Further increase spacing
+                scale_factor = (estimated_points / max_points) ** 0.5
+                grid_size = int(grid_size * scale_factor)
+            
             # Calculate start points to align with the grid
             left = int(rect.left()) - (int(rect.left()) % grid_size)
             top = int(rect.top()) - (int(rect.top()) % grid_size)

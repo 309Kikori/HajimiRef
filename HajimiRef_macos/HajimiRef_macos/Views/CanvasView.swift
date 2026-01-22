@@ -601,6 +601,16 @@ struct ImageView: View {
                     Button(LocalizedStringKey("Send to Back")) {
                         appState.sendToBack(id: imageEntity.id)
                     }
+                    
+                    Divider()
+                    
+                    Button(LocalizedStringKey("Export Board as Image")) {
+                        appState.exportBoardAsImage()
+                    }
+                    
+                    Button(LocalizedStringKey("Copy Board to Clipboard")) {
+                        appState.copyBoardToClipboard()
+                    }
                 }
         }
     }

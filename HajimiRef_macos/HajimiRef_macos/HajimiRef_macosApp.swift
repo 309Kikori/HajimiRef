@@ -85,7 +85,12 @@ struct HajimiRef_macosApp: App {
                     appState.exportBoardAsImage()
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-            }            
+                
+                Button(LocalizedStringKey("Copy to Clipboard")) {
+                    appState.copyBoardToClipboard()
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            }
             // 视图菜单：窗口行为
             // 添加一个切换开关以保持窗口“始终置顶”。
             // 这是参考软件的一项关键功能，允许艺术家在另一个应用程序

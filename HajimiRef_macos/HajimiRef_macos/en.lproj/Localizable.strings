@@ -36,6 +36,13 @@
 
 /* Export */
 "Export as Image..." = "Export as Image...";
+"Export Board as Image" = "Export Board as Image";
+"Copy to Clipboard" = "Copy to Clipboard";
+"Copy Board to Clipboard" = "Copy Board to Clipboard";
+"Copied to Clipboard" = "Copied to Clipboard";
+"Board copied to clipboard as image." = "Board copied to clipboard as image.";
+"Copy Failed" = "Copy Failed";
+"Failed to copy the board to clipboard." = "Failed to copy the board to clipboard.";
 "No Images" = "No Images";
 "There are no images on the canvas to export." = "There are no images on the canvas to export.";
 "Export Successful" = "Export Successful";

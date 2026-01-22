@@ -69,6 +69,12 @@ class MainWindow(QMainWindow):
         act_export.triggered.connect(self.export_board_to_image)
         file_menu.addAction(act_export)
         
+        act_export_clipboard = QAction(tr("export_to_clipboard"), self)
+        act_export_clipboard.triggered.connect(self.export_board_to_clipboard)
+        file_menu.addAction(act_export_clipboard)
+        
+        file_menu.addSeparator()
+        
         act_clear = QAction(tr("clear_board"), self)
         act_clear.triggered.connect(self.clear_board)
         file_menu.addAction(act_clear)
@@ -154,6 +160,7 @@ class MainWindow(QMainWindow):
         menu.addAction(tr("load_board"), self.load_board)
         menu.addSeparator()
         menu.addAction(tr("export_image"), self.export_board_to_image)
+        menu.addAction(tr("export_to_clipboard"), self.export_board_to_clipboard)
         menu.exec(self.view.mapToGlobal(pos))
 
     def organize_items(self, items):
@@ -405,6 +412,49 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr("success"), tr("export_success").format(path))
         else:
             QMessageBox.critical(self, tr("error"), tr("export_error"))
+
+    def export_board_to_clipboard(self):
+        """
+        导出画布到剪贴板 / Export board to clipboard
+        """
+        # 获取场景中所有内容的边界矩形
+        items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        if not items:
+            QMessageBox.warning(self, tr("warning"), tr("no_images_to_export"))
+            return
+        
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            QMessageBox.warning(self, tr("warning"), tr("no_images_to_export"))
+            return
+        
+        # 添加一些边距
+        margin = 20
+        rect = rect.adjusted(-margin, -margin, margin, margin)
+        
+        # 创建足够大的 QImage（使用透明背景）
+        width = int(rect.width())
+        height = int(rect.height())
+        
+        image = QImage(width, height, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        
+        # 使用 QPainter 将场景渲染到图片
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        # target: 目标绘制区域（整个图片）
+        # source: 场景中要渲染的区域
+        target = QRectF(0, 0, width, height)
+        self.scene.render(painter, target, rect)
+        painter.end()
+        
+        # 复制到剪贴板
+        clipboard = QApplication.clipboard()
+        clipboard.setImage(image)
+        
+        QMessageBox.information(self, tr("success"), tr("export_clipboard_success"))
 
     def load_board(self):
         """

@@ -360,6 +360,108 @@ class AppState {
         alert.runModal()
     }
     
+    // MARK: - Copy Board to Clipboard (复制画布到剪贴板)
+    
+    func copyBoardToClipboard() {
+        guard !images.isEmpty else {
+            // 没有图片可导出
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("No Images", comment: "")
+            alert.informativeText = NSLocalizedString("There are no images on the canvas to export.", comment: "")
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        
+        // 计算所有图片的边界框（考虑旋转）
+        var minX: CGFloat = .greatestFiniteMagnitude
+        var minY: CGFloat = .greatestFiniteMagnitude
+        var maxX: CGFloat = -.greatestFiniteMagnitude
+        var maxY: CGFloat = -.greatestFiniteMagnitude
+        
+        for img in images {
+            let originalW = (img.nsImage?.size.width ?? 100) * img.scale
+            let originalH = (img.nsImage?.size.height ?? 100) * img.scale
+            
+            // 计算旋转后的边界框尺寸
+            let (rotatedW, rotatedH) = rotatedBoundingBox(width: originalW, height: originalH, rotation: img.rotation)
+            
+            let left = img.x - rotatedW/2
+            let right = img.x + rotatedW/2
+            let top = img.y - rotatedH/2
+            let bottom = img.y + rotatedH/2
+            
+            if left < minX { minX = left }
+            if right > maxX { maxX = right }
+            if top < minY { minY = top }
+            if bottom > maxY { maxY = bottom }
+        }
+        
+        // 添加边距
+        let margin: CGFloat = 20
+        minX -= margin
+        minY -= margin
+        maxX += margin
+        maxY += margin
+        
+        let width = maxX - minX
+        let height = maxY - minY
+        
+        // 创建目标图片
+        let size = NSSize(width: width, height: height)
+        let image = NSImage(size: size)
+        
+        image.lockFocus()
+        
+        // 透明背景
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        
+        // 绘制每张图片
+        for img in images {
+            guard let nsImage = img.nsImage else { continue }
+            
+            let imgWidth = nsImage.size.width * img.scale
+            let imgHeight = nsImage.size.height * img.scale
+            
+            // 计算图片中心相对于导出图片的位置
+            let centerX = img.x - minX
+            let centerY = img.y - minY
+            
+            // 保存当前图形状态
+            NSGraphicsContext.saveGraphicsState()
+            
+            // 移动到图片中心点，应用旋转，然后绘制
+            let transform = NSAffineTransform()
+            transform.translateX(by: centerX, yBy: centerY)
+            transform.rotate(byDegrees: img.rotation)
+            transform.concat()
+            
+            // 绘制图片（以中心为原点）
+            nsImage.draw(in: NSRect(x: -imgWidth/2, y: -imgHeight/2, width: imgWidth, height: imgHeight),
+                        from: NSRect(origin: .zero, size: nsImage.size),
+                        operation: .sourceOver,
+                        fraction: 1.0)
+            
+            // 恢复图形状态
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        
+        image.unlockFocus()
+        
+        // 复制到剪贴板
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image])
+        
+        // 显示成功提示
+        let alert = NSAlert()
+        alert.messageText = NSLocalizedString("Copy Successful", comment: "")
+        alert.informativeText = NSLocalizedString("Board copied to clipboard.", comment: "")
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
+    
     // MARK: - Window Management
     
     private func updateWindowLevel() {

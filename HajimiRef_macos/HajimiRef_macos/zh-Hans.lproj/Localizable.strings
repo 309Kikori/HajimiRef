@@ -36,6 +36,13 @@
 
 /* Export */
 "Export as Image..." = "导出为图片...";
+"Export Board as Image" = "导出画布为图片";
+"Copy to Clipboard" = "复制到剪贴板";
+"Copy Board to Clipboard" = "复制画布到剪贴板";
+"Copied to Clipboard" = "已复制到剪贴板";
+"Board copied to clipboard as image." = "画布已作为图片复制到剪贴板。";
+"Copy Failed" = "复制失败";
+"Failed to copy the board to clipboard." = "无法将画布复制到剪贴板。";
 "No Images" = "没有图片";
 "There are no images on the canvas to export." = "画布上没有可导出的图片。";
 "Export Successful" = "导出成功";

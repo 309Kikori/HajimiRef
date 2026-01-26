@@ -6,16 +6,21 @@ import sys
 import os
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPalette, QColor, Qt, QIcon
+from PySide6.QtCore import QSize
 from Views.MainWindow import MainWindow
 
 if __name__ == "__main__":
     # 程序入口 / Program entry point
     app = QApplication(sys.argv)
     
-    # Set App Icon
+    # Set App Icon - 为不同尺寸添加图标，确保任务栏显示正常
     icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.png")
     if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+        icon = QIcon()
+        # 添加多个尺寸，让 Windows 任务栏能正确显示
+        for size in [16, 24, 32, 48, 64, 128, 256]:
+            icon.addFile(icon_path, QSize(size, size))
+        app.setWindowIcon(icon)
     
     # --- 设置现代暗色主题 / Modern Dark Theme Setup ---
     # 使用 "Material" 风格，这会影响控件的基础外观 / Use "Material" style for a modern base look

@@ -171,6 +171,7 @@ struct CanvasView: View {
     // [个性化设置] 读取用户偏好
     @AppStorage("showGrid") private var showGrid: Bool = true
     @AppStorage("canvasBgColorHex") private var canvasBgColorHex: String = "#1E1E1E"
+    @AppStorage("inactiveBgColorHex") private var inactiveBgColorHex: String = "#141414"  // 非活动区域更深色
     @AppStorage("gridColorHex") private var gridColorHex: String = "#404040"
     
     // [交互设计] 框选状态
@@ -182,15 +183,31 @@ struct CanvasView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 0. Visual Background Layer
-                // [视觉设计] 用户自定义背景颜色
-                Color(hex: canvasBgColorHex)
+                // 0. Visual Background Layer - 非活动区域背景（更深色）
+                // [视觉设计] 非活动区域用更深的颜色
+                Color(hex: inactiveBgColorHex)
                     .ignoresSafeArea()
                 
+                // 0.3 Active Area Background Layer - 活动区域背景（较浅色）
+                // [性能优化] 只在有图片的区域显示较浅背景
+                ActiveAreaBackground(
+                    appState: appState,
+                    activeColor: Color(hex: canvasBgColorHex),
+                    canvasOffset: appState.canvasOffset,
+                    canvasScale: appState.canvasScale,
+                    frameSize: geometry.size
+                )
+                
                 // 0.5 Grid Layer
-                // [视觉设计] 点阵网格，模仿 Freeform/手帐应用
+                // [视觉设计] 点阵网格，只在活动区域渲染
                 if showGrid {
-                    GridBackground(offset: appState.canvasOffset, scale: appState.canvasScale, color: Color(hex: gridColorHex))
+                    OptimizedGridBackground(
+                        appState: appState,
+                        offset: appState.canvasOffset,
+                        scale: appState.canvasScale,
+                        color: Color(hex: gridColorHex),
+                        frameSize: geometry.size
+                    )
                 }
                 
                 // 1. Interaction Layer (Click to clear, Drag to Box Select)
@@ -782,6 +799,145 @@ struct GridBackground: View {
             }
         }
         .allowsHitTesting(false) // Ensure clicks pass through to the background layer
+    }
+}
+
+// MARK: - Active Area Background
+/// [性能优化] 只在活动区域（图片所在区域）绘制浅色背景
+struct ActiveAreaBackground: View {
+    var appState: AppState
+    var activeColor: Color
+    var canvasOffset: CGSize
+    var canvasScale: CGFloat
+    var frameSize: CGSize
+    
+    var body: some View {
+        Canvas { context, size in
+            // 计算活动区域（世界坐标）
+            guard let worldBounds = appState.calculateAllImagesBounds(padding: 200) else {
+                return
+            }
+            
+            // 将世界坐标转换为屏幕坐标
+            // 屏幕坐标 = (世界坐标 * scale) + offset + center
+            let centerX = size.width / 2
+            let centerY = size.height / 2
+            
+            let screenX = worldBounds.minX * canvasScale + canvasOffset.width * canvasScale + centerX
+            let screenY = worldBounds.minY * canvasScale + canvasOffset.height * canvasScale + centerY
+            let screenWidth = worldBounds.width * canvasScale
+            let screenHeight = worldBounds.height * canvasScale
+            
+            let screenRect = CGRect(x: screenX, y: screenY, width: screenWidth, height: screenHeight)
+            
+            // 绘制活动区域背景
+            context.fill(Path(screenRect), with: .color(activeColor))
+            
+            // 绘制活动区域边框（帮助用户识别边界）
+            context.stroke(Path(screenRect), with: .color(Color(white: 0.35)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Optimized Grid Background
+/// [性能优化] 只在活动区域（图片所在区域）绘制点阵网格
+struct OptimizedGridBackground: View {
+    var appState: AppState
+    var offset: CGSize
+    var scale: CGFloat
+    var color: Color
+    var frameSize: CGSize
+    
+    var body: some View {
+        Canvas { context, size in
+            // 计算活动区域（世界坐标）
+            guard let worldBounds = appState.calculateAllImagesBounds(padding: 200) else {
+                return
+            }
+            
+            // 将世界坐标转换为屏幕坐标
+            let centerX = size.width / 2
+            let centerY = size.height / 2
+            
+            let screenMinX = worldBounds.minX * scale + offset.width * scale + centerX
+            let screenMinY = worldBounds.minY * scale + offset.height * scale + centerY
+            let screenMaxX = worldBounds.maxX * scale + offset.width * scale + centerX
+            let screenMaxY = worldBounds.maxY * scale + offset.height * scale + centerY
+            
+            // 裁剪到可见区域
+            let visibleMinX = max(0, screenMinX)
+            let visibleMinY = max(0, screenMinY)
+            let visibleMaxX = min(size.width, screenMaxX)
+            let visibleMaxY = min(size.height, screenMaxY)
+            
+            // 如果活动区域不在可见范围内，不绘制
+            guard visibleMinX < visibleMaxX && visibleMinY < visibleMaxY else {
+                return
+            }
+            
+            let baseSpacing: CGFloat = 20.0
+            var effectiveSpacing = baseSpacing
+            
+            // LOD (Level of Detail): Increase spacing when zoomed out
+            while (effectiveSpacing * scale) < 15 {
+                effectiveSpacing *= 2
+            }
+            
+            let gridStep = effectiveSpacing * scale
+            let dotRadius = 1.0
+            
+            let offsetX = offset.width * scale
+            let offsetY = offset.height * scale
+            
+            // Calculate start positions to align grid with world space
+            var startX = offsetX.truncatingRemainder(dividingBy: gridStep)
+            if startX < 0 { startX += gridStep }
+            
+            var startY = offsetY.truncatingRemainder(dividingBy: gridStep)
+            if startY < 0 { startY += gridStep }
+            
+            // 调整起始点到可见活动区域内
+            var drawStartX = startX
+            while drawStartX < visibleMinX {
+                drawStartX += gridStep
+            }
+            
+            var drawStartY = startY
+            while drawStartY < visibleMinY {
+                drawStartY += gridStep
+            }
+            
+            // 限制最大点数（防止极端情况）
+            let estimatedCols = (visibleMaxX - drawStartX) / gridStep
+            let estimatedRows = (visibleMaxY - drawStartY) / gridStep
+            let estimatedPoints = estimatedCols * estimatedRows
+            
+            var actualGridStep = gridStep
+            if estimatedPoints > 5000 {
+                let scaleFactor = sqrt(estimatedPoints / 5000)
+                actualGridStep = gridStep * scaleFactor
+                
+                // 重新计算起始点
+                drawStartX = startX
+                while drawStartX < visibleMinX {
+                    drawStartX += actualGridStep
+                }
+                drawStartY = startY
+                while drawStartY < visibleMinY {
+                    drawStartY += actualGridStep
+                }
+            }
+            
+            // Draw dots only within active area
+            for x in stride(from: drawStartX, to: visibleMaxX, by: actualGridStep) {
+                for y in stride(from: drawStartY, to: visibleMaxY, by: actualGridStep) {
+                    let rect = CGRect(x: x - dotRadius, y: y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+                    context.fill(Path(ellipseIn: rect), with: .color(color))
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 

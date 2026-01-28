@@ -17,6 +17,9 @@ class Config:
     grid_size = 40
     grid_enabled = True
     active_area_padding = 200  # 活动区域边距（像素）
+    # 画板初始大小（世界坐标）/ Initial board size (world coordinates)
+    initial_board_width = 2000
+    initial_board_height = 1500
 
     @classmethod
     def reset_defaults(cls):
@@ -30,6 +33,8 @@ class Config:
         cls.grid_size = 40
         cls.grid_enabled = True
         cls.active_area_padding = 200
+        cls.initial_board_width = 2000
+        cls.initial_board_height = 1500
 
 def tr(key):
     """

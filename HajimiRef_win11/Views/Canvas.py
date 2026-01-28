@@ -267,6 +267,12 @@ class RefView(QGraphicsView):
         self._is_panning = False
         self._pan_start = QPointF()
         self._space_pressed = False
+        
+        # 画板边界状态（只扩展不收缩）/ Board bounds state (expand only, never shrink)
+        # 初始画板边界以原点为中心 / Initial board bounds centered at origin
+        half_w = Config.initial_board_width / 2
+        half_h = Config.initial_board_height / 2
+        self._board_bounds = QRectF(-half_w, -half_h, Config.initial_board_width, Config.initial_board_height)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """
@@ -311,58 +317,83 @@ class RefView(QGraphicsView):
     def drawBackground(self, painter, rect):
         """
         绘制背景和网格 / Draw background and grid
-        优化：只在活动区域（图片所在区域）绘制网格，其余区域用更深颜色填充
+        优化：画板有固定边界，只在画板内绘制网格，图片移出画板时画板扩展
         """
-        # 计算活动区域（所有图片的边界框） / Calculate active area (bounding box of all images)
-        active_rect = self._calculateActiveRect()
-        
-        if active_rect.isNull():
-            # 没有图片时，全部用非活动区域颜色 / No images, fill all with inactive color
-            painter.fillRect(rect, Config.inactive_bg_color)
-            return
+        # 更新画板边界（只扩展不收缩）/ Update board bounds (expand only)
+        self._updateBoardBounds()
         
         # 先填充整个可见区域为非活动区域颜色 / Fill entire visible area with inactive color first
         painter.fillRect(rect, Config.inactive_bg_color)
         
-        # 计算可见区域与活动区域的交集 / Calculate intersection of visible area and active area
-        visible_active_rect = rect.intersected(active_rect)
+        # 计算可见区域与画板的交集 / Calculate intersection of visible area and board
+        visible_board_rect = rect.intersected(self._board_bounds)
         
-        if visible_active_rect.isEmpty():
-            # 活动区域不在可见范围内 / Active area not visible
+        if visible_board_rect.isEmpty():
+            # 画板不在可见范围内 / Board not visible
             return
         
-        # 填充活动区域背景 / Fill active area background
-        painter.fillRect(visible_active_rect, Config.bg_color)
+        # 填充画板背景 / Fill board background
+        painter.fillRect(visible_board_rect, Config.bg_color)
         
-        # 绘制活动区域边框（可选，帮助用户识别活动区域） / Draw active area border (optional)
+        # 绘制画板边框（帮助用户识别画板边界） / Draw board border
         border_pen = QPen(QColor(80, 80, 80), 1)
         border_pen.setCosmetic(True)
         painter.setPen(border_pen)
-        painter.drawRect(active_rect)
+        painter.drawRect(self._board_bounds)
         
         if Config.grid_enabled:
-            # 只在活动区域绘制网格 / Only draw grid in active area
-            self._drawGridInRect(painter, visible_active_rect)
+            # 只在画板内绘制网格 / Only draw grid within board
+            self._drawGridInRect(painter, visible_board_rect)
     
-    def _calculateActiveRect(self):
+    def _updateBoardBounds(self):
         """
-        计算所有图片的边界框，添加边距 / Calculate bounding box of all images with padding
+        更新画板边界，只扩展不收缩 / Update board bounds, expand only never shrink
+        当图片移出画板边界时，扩展画板以包含该图片
         """
         items = [item for item in self.scene().items() if isinstance(item, RefItem)]
         
         if not items:
-            return QRectF()
+            return  # 没有图片时保持当前画板大小
         
-        # 计算所有图片的联合边界框 / Calculate union of all image bounding boxes
-        union_rect = QRectF()
-        for item in items:
-            union_rect = union_rect.united(item.sceneBoundingRect())
-        
-        # 添加边距 / Add padding
+        # 计算所有图片的边界框 / Calculate bounding box of all images
         padding = Config.active_area_padding
-        union_rect.adjust(-padding, -padding, padding, padding)
         
-        return union_rect
+        for item in items:
+            item_rect = item.sceneBoundingRect()
+            # 添加边距 / Add padding
+            item_rect.adjust(-padding, -padding, padding, padding)
+            
+            # 扩展画板边界以包含此图片（只扩展不收缩）
+            # Expand board bounds to include this image (expand only)
+            if item_rect.left() < self._board_bounds.left():
+                # 左边扩展
+                new_left = item_rect.left()
+                new_width = self._board_bounds.right() - new_left
+                self._board_bounds.setLeft(new_left)
+                self._board_bounds.setWidth(new_width)
+            
+            if item_rect.right() > self._board_bounds.right():
+                # 右边扩展
+                self._board_bounds.setRight(item_rect.right())
+            
+            if item_rect.top() < self._board_bounds.top():
+                # 上边扩展
+                new_top = item_rect.top()
+                new_height = self._board_bounds.bottom() - new_top
+                self._board_bounds.setTop(new_top)
+                self._board_bounds.setHeight(new_height)
+            
+            if item_rect.bottom() > self._board_bounds.bottom():
+                # 下边扩展
+                self._board_bounds.setBottom(item_rect.bottom())
+    
+    def resetBoardBounds(self):
+        """
+        重置画板边界为初始大小 / Reset board bounds to initial size
+        """
+        half_w = Config.initial_board_width / 2
+        half_h = Config.initial_board_height / 2
+        self._board_bounds = QRectF(-half_w, -half_h, Config.initial_board_width, Config.initial_board_height)
     
     def _drawGridInRect(self, painter, rect):
         """

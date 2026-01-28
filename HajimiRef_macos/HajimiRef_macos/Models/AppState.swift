@@ -12,6 +12,10 @@ class AppState {
     var canvasScale: CGFloat = 1.0
     var selectedImageIds: Set<UUID> = []
     
+    // [画板状态] 画板边界（固定初始范围，只扩展不收缩）
+    // 初始画板大小：以原点为中心，宽高各1200
+    var boardBounds: CGRect = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+    
     // [交互状态] 临时拖拽偏移
     // 用于在拖拽过程中实时更新所有选中图片的位置，而不需要频繁提交到 images 数组。
     var currentDragOffset: CGSize = .zero
@@ -64,6 +68,58 @@ class AppState {
         // Reset canvas view to default state
         canvasOffset = .zero
         canvasScale = 1.0
+        // 重置画板边界为初始大小
+        boardBounds = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+    }
+    
+    // MARK: - Board Bounds Management (画板边界管理)
+    
+    /// 扩展画板边界以包含指定的矩形区域（只扩展不收缩）
+    func expandBoardBounds(toInclude rect: CGRect) {
+        let newMinX = min(boardBounds.minX, rect.minX)
+        let newMinY = min(boardBounds.minY, rect.minY)
+        let newMaxX = max(boardBounds.maxX, rect.maxX)
+        let newMaxY = max(boardBounds.maxY, rect.maxY)
+        
+        boardBounds = CGRect(
+            x: newMinX,
+            y: newMinY,
+            width: newMaxX - newMinX,
+            height: newMaxY - newMinY
+        )
+    }
+    
+    /// 检查并扩展画板边界以包含所有图片
+    func updateBoardBoundsIfNeeded() {
+        for img in images {
+            let w = (img.nsImage?.size.width ?? 100) * img.scale
+            let h = (img.nsImage?.size.height ?? 100) * img.scale
+            
+            // 计算图片边界（带边距）
+            let padding: CGFloat = 100
+            let imgRect = CGRect(
+                x: img.x - w/2 - padding,
+                y: img.y - h/2 - padding,
+                width: w + padding * 2,
+                height: h + padding * 2
+            )
+            
+            // 只有当图片超出画板边界时才扩展
+            if imgRect.minX < boardBounds.minX ||
+               imgRect.minY < boardBounds.minY ||
+               imgRect.maxX > boardBounds.maxX ||
+               imgRect.maxY > boardBounds.maxY {
+                expandBoardBounds(toInclude: imgRect)
+            }
+        }
+    }
+    
+    /// 重置画板边界为包含所有图片的最小范围
+    func resetBoardBounds() {
+        // 先重置为初始大小
+        boardBounds = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+        // 然后扩展以包含所有图片
+        updateBoardBoundsIfNeeded()
     }
     
     // [视觉设计] 内容居中

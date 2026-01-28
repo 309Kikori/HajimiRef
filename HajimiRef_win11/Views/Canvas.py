@@ -311,49 +311,99 @@ class RefView(QGraphicsView):
     def drawBackground(self, painter, rect):
         """
         绘制背景和网格 / Draw background and grid
+        优化：只在活动区域（图片所在区域）绘制网格，其余区域用更深颜色填充
         """
-        painter.fillRect(rect, Config.bg_color)
+        # 计算活动区域（所有图片的边界框） / Calculate active area (bounding box of all images)
+        active_rect = self._calculateActiveRect()
+        
+        if active_rect.isNull():
+            # 没有图片时，全部用非活动区域颜色 / No images, fill all with inactive color
+            painter.fillRect(rect, Config.inactive_bg_color)
+            return
+        
+        # 先填充整个可见区域为非活动区域颜色 / Fill entire visible area with inactive color first
+        painter.fillRect(rect, Config.inactive_bg_color)
+        
+        # 计算可见区域与活动区域的交集 / Calculate intersection of visible area and active area
+        visible_active_rect = rect.intersected(active_rect)
+        
+        if visible_active_rect.isEmpty():
+            # 活动区域不在可见范围内 / Active area not visible
+            return
+        
+        # 填充活动区域背景 / Fill active area background
+        painter.fillRect(visible_active_rect, Config.bg_color)
+        
+        # 绘制活动区域边框（可选，帮助用户识别活动区域） / Draw active area border (optional)
+        border_pen = QPen(QColor(80, 80, 80), 1)
+        border_pen.setCosmetic(True)
+        painter.setPen(border_pen)
+        painter.drawRect(active_rect)
         
         if Config.grid_enabled:
-            # 获取当前缩放级别 / Get current zoom level
-            view_scale = self.transform().m11()
-            
-            # 根据缩放级别动态调整网格间隔，限制最大点数 / Dynamically adjust grid spacing based on zoom level
-            # 目标：屏幕上网格点的间隔保持相对恒定（约20-40像素）
-            base_grid_size = Config.grid_size
-            
-            # 计算实际绘制的网格间隔 / Calculate actual grid spacing for drawing
-            # 当缩放很小时，增大间隔以减少点数
-            if view_scale < 1.0:
-                # 向上取整到 base_grid_size 的倍数
-                multiplier = max(1, int(1.0 / view_scale))
-                grid_size = base_grid_size * multiplier
-            else:
-                grid_size = base_grid_size
-            
-            # 限制最大绘制点数（防止极端情况） / Limit max points to prevent extreme cases
-            max_points = 10000
-            width = rect.width()
-            height = rect.height()
-            estimated_points = (width / grid_size) * (height / grid_size)
-            
-            if estimated_points > max_points:
-                # 进一步增大间隔 / Further increase spacing
-                scale_factor = (estimated_points / max_points) ** 0.5
-                grid_size = int(grid_size * scale_factor)
-            
-            # Calculate start points to align with the grid
-            left = int(rect.left()) - (int(rect.left()) % grid_size)
-            top = int(rect.top()) - (int(rect.top()) % grid_size)
-            
-            points = []
-            # Draw dots
-            for x in range(left, int(rect.right()) + grid_size, grid_size):
-                for y in range(top, int(rect.bottom()) + grid_size, grid_size):
+            # 只在活动区域绘制网格 / Only draw grid in active area
+            self._drawGridInRect(painter, visible_active_rect)
+    
+    def _calculateActiveRect(self):
+        """
+        计算所有图片的边界框，添加边距 / Calculate bounding box of all images with padding
+        """
+        items = [item for item in self.scene().items() if isinstance(item, RefItem)]
+        
+        if not items:
+            return QRectF()
+        
+        # 计算所有图片的联合边界框 / Calculate union of all image bounding boxes
+        union_rect = QRectF()
+        for item in items:
+            union_rect = union_rect.united(item.sceneBoundingRect())
+        
+        # 添加边距 / Add padding
+        padding = Config.active_area_padding
+        union_rect.adjust(-padding, -padding, padding, padding)
+        
+        return union_rect
+    
+    def _drawGridInRect(self, painter, rect):
+        """
+        在指定区域内绘制网格点 / Draw grid dots within specified rect
+        """
+        # 获取当前缩放级别 / Get current zoom level
+        view_scale = self.transform().m11()
+        
+        # 根据缩放级别动态调整网格间隔 / Dynamically adjust grid spacing based on zoom level
+        base_grid_size = Config.grid_size
+        
+        # 当缩放很小时，增大间隔以减少点数
+        if view_scale < 1.0:
+            multiplier = max(1, int(1.0 / view_scale))
+            grid_size = base_grid_size * multiplier
+        else:
+            grid_size = base_grid_size
+        
+        # 限制最大绘制点数 / Limit max points
+        max_points = 5000
+        width = rect.width()
+        height = rect.height()
+        estimated_points = (width / grid_size) * (height / grid_size)
+        
+        if estimated_points > max_points:
+            scale_factor = (estimated_points / max_points) ** 0.5
+            grid_size = int(grid_size * scale_factor)
+        
+        # Calculate start points to align with the grid
+        left = int(rect.left()) - (int(rect.left()) % grid_size)
+        top = int(rect.top()) - (int(rect.top()) % grid_size)
+        
+        points = []
+        # Draw dots only within rect bounds
+        for x in range(left, int(rect.right()) + grid_size, grid_size):
+            for y in range(top, int(rect.bottom()) + grid_size, grid_size):
+                if rect.contains(QPointF(x, y)):
                     points.append(QPointF(x, y))
-            
-            painter.setPen(QPen(Config.grid_color, 2))
-            painter.drawPoints(points)
+        
+        painter.setPen(QPen(Config.grid_color, 2))
+        painter.drawPoints(points)
 
     def wheelEvent(self, event):
         """

@@ -453,8 +453,6 @@ class MainWindow(QMainWindow):
         # 复制到剪贴板
         clipboard = QApplication.clipboard()
         clipboard.setImage(image)
-        
-        QMessageBox.information(self, tr("success"), tr("export_clipboard_success"))
 
     def load_board(self):
         """

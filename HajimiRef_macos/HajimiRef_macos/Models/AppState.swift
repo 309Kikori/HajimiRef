@@ -453,13 +453,6 @@ class AppState {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([image])
-        
-        // 显示成功提示
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Copy Successful", comment: "")
-        alert.informativeText = NSLocalizedString("Board copied to clipboard.", comment: "")
-        alert.alertStyle = .informational
-        alert.runModal()
     }
     
     // MARK: - Window Management

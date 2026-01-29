@@ -118,6 +118,18 @@ struct WindowAccessor: NSViewRepresentable {
         
         // MARK: - Key Events
         private func handleKeyDown(_ event: NSEvent) -> Bool {
+            // [撤销/重做] Cmd+Z 撤销, Cmd+Shift+Z 重做
+            if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "z" {
+                if event.modifierFlags.contains(.shift) {
+                    // Cmd+Shift+Z: 重做
+                    appState.redo()
+                } else {
+                    // Cmd+Z: 撤销
+                    appState.undo()
+                }
+                return true
+            }
+            
             if event.charactersIgnoringModifiers == "f" {
                 appState.centerContent()
                 return true
@@ -434,6 +446,12 @@ struct ImageView: View {
     // 用于在拖拽开始时记录整个选择集的边界，以便计算缩放锚点。
     @State private var initialSelectionBounds: CGRect? = nil
     
+    // [撤销/重做] 记录操作前的状态
+    @State private var dragStartPositions: [UUID: CGPoint] = [:]  // 拖拽开始时的位置
+    @State private var scaleStartValue: CGFloat = 1.0  // 缩放开始时的值
+    @State private var rotationStartValue: CGFloat = 0  // 旋转开始时的值
+    @State private var resizeStartStates: [(id: UUID, scale: CGFloat, position: CGPoint)] = []  // resize开始时的状态
+    
     var isSelected: Bool {
         appState.selectedImageIds.contains(imageEntity.id)
     }
@@ -523,6 +541,15 @@ struct ImageView: View {
                                     }
                                 }
                                 
+                                // [撤销/重做] 记录拖拽开始时的位置（仅在第一次 onChanged 时记录）
+                                if dragStartPositions.isEmpty {
+                                    for id in appState.selectedImageIds {
+                                        if let img = appState.images.first(where: { $0.id == id }) {
+                                            dragStartPositions[id] = CGPoint(x: img.x, y: img.y)
+                                        }
+                                    }
+                                }
+                                
                                 // 2. 更新全局拖拽偏移 (除以 canvasScale 以适应缩放)
                                 // 注意：value.translation 是屏幕像素 (Canvas Space)，需要转换为世界坐标增量。
                                 appState.currentDragOffset = CGSize(
@@ -538,40 +565,85 @@ struct ImageView: View {
                                     height: value.translation.height / appState.canvasScale
                                 )
                                 
+                                // [撤销/重做] 构建批量移动记录
+                                var moveChanges: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)] = []
+                                
                                 for id in appState.selectedImageIds {
                                     if let index = appState.images.firstIndex(where: { $0.id == id }) {
-                                        appState.images[index].x += finalOffset.width
-                                        appState.images[index].y += finalOffset.height
+                                        let oldPos = dragStartPositions[id] ?? CGPoint(x: appState.images[index].x, y: appState.images[index].y)
+                                        let newPos = CGPoint(
+                                            x: appState.images[index].x + finalOffset.width,
+                                            y: appState.images[index].y + finalOffset.height
+                                        )
+                                        
+                                        appState.images[index].x = newPos.x
+                                        appState.images[index].y = newPos.y
+                                        
+                                        moveChanges.append((imageId: id, oldPosition: oldPos, newPosition: newPos))
                                     }
                                 }
                                 
-                                // 4. 重置全局偏移
+                                // [撤销/重做] 记录批量移动操作（只有实际移动了才记录）
+                                if !moveChanges.isEmpty && (abs(finalOffset.width) > 0.1 || abs(finalOffset.height) > 0.1) {
+                                    appState.undoManager.recordAction(.batchMove(changes: moveChanges))
+                                }
+                                
+                                // 4. 重置状态
                                 appState.currentDragOffset = .zero
+                                dragStartPositions.removeAll()
                             }
                         ,
                         SimultaneousGesture(
                             // Pinch to Scale (Trackpad)
                             MagnificationGesture()
                                 .onChanged { value in
+                                    // [撤销/重做] 记录缩放开始时的值（仅在第一次 onChanged 时记录）
+                                    if zoomScale == 1.0 {
+                                        scaleStartValue = imageEntity.scale
+                                    }
                                     zoomScale = value
                                 }
                                 .onEnded { value in
                                     if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
-                                        appState.images[index].scale *= value
+                                        let oldScale = scaleStartValue
+                                        let newScale = appState.images[index].scale * value
+                                        appState.images[index].scale = newScale
+                                        
+                                        // [撤销/重做] 记录缩放操作
+                                        appState.undoManager.recordAction(.scale(
+                                            imageId: imageEntity.id,
+                                            oldScale: oldScale,
+                                            newScale: newScale
+                                        ))
                                     }
                                     zoomScale = 1.0
+                                    scaleStartValue = 1.0
                                 }
                             ,
                             // Rotate (Trackpad)
                             RotationGesture()
                                 .onChanged { value in
+                                    // [撤销/重做] 记录旋转开始时的值（仅在第一次 onChanged 时记录）
+                                    if rotationAngle == .zero {
+                                        rotationStartValue = imageEntity.rotation
+                                    }
                                     rotationAngle = value
                                 }
                                 .onEnded { value in
                                     if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
-                                        appState.images[index].rotation += value.degrees
+                                        let oldRotation = rotationStartValue
+                                        let newRotation = appState.images[index].rotation + value.degrees
+                                        appState.images[index].rotation = newRotation
+                                        
+                                        // [撤销/重做] 记录旋转操作
+                                        appState.undoManager.recordAction(.rotate(
+                                            imageId: imageEntity.id,
+                                            oldRotation: oldRotation,
+                                            newRotation: newRotation
+                                        ))
                                     }
                                     rotationAngle = .zero
+                                    rotationStartValue = 0
                                 }
                         )
                     )
@@ -639,7 +711,7 @@ struct ImageView: View {
     }
     
     // [交互逻辑] 调整大小手势 (锚点缩放)
-    // 根据拖拽的手柄位置，计算缩放比例和中心点偏移，以实现“对角线锚点”的视觉效果。
+    // 根据拖拽的手柄位置，计算缩放比例和中心点偏移，以实现"对角线锚点"的视觉效果。
     private func resizeGesture(handle: Alignment, originalSize: CGSize) -> some Gesture {
         // [交互优化] 使用全局坐标系 (Canvas)
         // 避免使用 .local，因为手势过程中视图本身的大小和位置会发生变化，导致坐标系不稳定（闪烁）。
@@ -649,6 +721,14 @@ struct ImageView: View {
                 if initialSelectionBounds == nil {
                     if let bounds = appState.calculateSelectionBounds() {
                         initialSelectionBounds = bounds
+                        
+                        // [撤销/重做] 记录resize开始时所有选中图片的状态
+                        resizeStartStates.removeAll()
+                        for id in appState.selectedImageIds {
+                            if let img = appState.images.first(where: { $0.id == id }) {
+                                resizeStartStates.append((id: id, scale: img.scale, position: CGPoint(x: img.x, y: img.y)))
+                            }
+                        }
                         
                         // 根据手柄位置确定锚点 (Anchor)
                         // 锚点是手柄的对角点
@@ -725,29 +805,51 @@ struct ImageView: View {
                 let anchor = appState.multiSelectAnchor
                 let k = appState.multiSelectScaleFactor
                 
+                // [撤销/重做] 构建批量缩放记录
+                var scaleChanges: [(imageId: UUID, oldScale: CGFloat, newScale: CGFloat, oldPosition: CGPoint, newPosition: CGPoint)] = []
+                
                 for id in appState.selectedImageIds {
                     if let index = appState.images.firstIndex(where: { $0.id == id }) {
+                        // 获取原始状态
+                        let startState = resizeStartStates.first(where: { $0.id == id })
+                        let oldScale = startState?.scale ?? appState.images[index].scale
+                        let oldPosition = startState?.position ?? CGPoint(x: appState.images[index].x, y: appState.images[index].y)
+                        
                         // 1. 更新缩放
-                        appState.images[index].scale *= k
+                        let newScale = oldScale * k
+                        appState.images[index].scale = newScale
                         
                         // 2. 更新位置 (相对于锚点缩放)
                         // NewPos = Anchor + (OldPos - Anchor) * k
-                        let oldX = appState.images[index].x
-                        let oldY = appState.images[index].y
+                        let newX = anchor.x + (oldPosition.x - anchor.x) * k
+                        let newY = anchor.y + (oldPosition.y - anchor.y) * k
                         
-                        appState.images[index].x = anchor.x + (oldX - anchor.x) * k
-                        appState.images[index].y = anchor.y + (oldY - anchor.y) * k
+                        appState.images[index].x = newX
+                        appState.images[index].y = newY
+                        
+                        scaleChanges.append((
+                            imageId: id,
+                            oldScale: oldScale,
+                            newScale: newScale,
+                            oldPosition: oldPosition,
+                            newPosition: CGPoint(x: newX, y: newY)
+                        ))
                     }
+                }
+                
+                // [撤销/重做] 记录批量缩放操作（只有实际缩放了才记录）
+                if !scaleChanges.isEmpty && abs(k - 1.0) > 0.01 {
+                    appState.undoManager.recordAction(.batchScale(changes: scaleChanges))
                 }
                 
                 // 重置临时状态
                 zoomScale = 1.0
                 appState.multiSelectScaleFactor = 1.0
                 initialSelectionBounds = nil
+                resizeStartStates.removeAll()
             }
     }
 }
-
 // MARK: - Resize Handle
 
 // [视觉设计] 调整大小手柄组件

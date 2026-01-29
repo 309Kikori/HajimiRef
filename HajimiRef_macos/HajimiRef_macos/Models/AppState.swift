@@ -13,6 +13,9 @@ class AppState {
     var canvasScale: CGFloat = 1.0
     var selectedImageIds: Set<UUID> = []
     
+    // [撤销/重做] 撤销管理器
+    var undoManager = CanvasUndoManager()
+    
     // [画板状态] 画板边界（固定初始范围，只扩展不收缩）
     // 初始画板大小：以原点为中心，宽高各1200
     var boardBounds: CGRect = CGRect(x: -600, y: -600, width: 1200, height: 1200)
@@ -89,6 +92,9 @@ class AppState {
             // 初始化新图片实体，默认缩放 (1.0) 和旋转 (0)。
             let newImage = ImageEntity(x: position.x, y: position.y, scale: 1.0, rotation: 0, data: base64)
             images.append(newImage)
+            
+            // [撤销/重做] 记录添加图片操作
+            undoManager.recordAction(.addImage(image: newImage))
         } catch {
             print("Failed to load image: \(error)")
         }
@@ -98,14 +104,28 @@ class AppState {
         let base64 = data.base64EncodedString()
         let newImage = ImageEntity(x: position.x, y: position.y, scale: 1.0, rotation: 0, data: base64)
         images.append(newImage)
+        
+        // [撤销/重做] 记录添加图片操作
+        undoManager.recordAction(.addImage(image: newImage))
     }
     
     func removeImage(id: UUID) {
+        // [撤销/重做] 记录删除图片操作
+        if let index = images.firstIndex(where: { $0.id == id }) {
+            let image = images[index]
+            undoManager.recordAction(.removeImage(image: image, index: index))
+        }
+        
         images.removeAll { $0.id == id }
         selectedImageIds.remove(id)
     }
     
     func clearBoard() {
+        // [撤销/重做] 记录清空画板操作
+        if !images.isEmpty {
+            undoManager.recordAction(.clearBoard(images: images))
+        }
+        
         images.removeAll()
         selectedImageIds.removeAll()
         // Reset canvas view to default state
@@ -113,6 +133,18 @@ class AppState {
         canvasScale = 1.0
         // 重置画板边界为初始大小
         boardBounds = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+    }
+    
+    // MARK: - Undo/Redo (撤销/重做)
+    
+    /// 撤销上一步操作
+    func undo() {
+        undoManager.undo(appState: self)
+    }
+    
+    /// 重做上一步撤销的操作
+    func redo() {
+        undoManager.redo(appState: self)
     }
     
     // MARK: - Board Bounds Management (画板边界管理)
@@ -226,27 +258,46 @@ class AppState {
     
     func bringToFront(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }) {
+            let oldIndex = index
             let item = images.remove(at: index)
             images.append(item) // Move to end of array
+            let newIndex = images.count - 1
+            
+            // [撤销/重做] 记录图层顺序变更
+            undoManager.recordAction(.reorder(imageId: id, oldIndex: oldIndex, newIndex: newIndex))
         }
     }
     
     func sendToBack(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }) {
+            let oldIndex = index
             let item = images.remove(at: index)
             images.insert(item, at: 0) // Move to start of array
+            
+            // [撤销/重做] 记录图层顺序变更
+            undoManager.recordAction(.reorder(imageId: id, oldIndex: oldIndex, newIndex: 0))
         }
     }
     
     func bringForward(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }), index < images.count - 1 {
+            let oldIndex = index
+            let newIndex = index + 1
             images.swapAt(index, index + 1) // Swap with the element above
+            
+            // [撤销/重做] 记录图层顺序变更
+            undoManager.recordAction(.reorder(imageId: id, oldIndex: oldIndex, newIndex: newIndex))
         }
     }
     
     func sendBackward(id: UUID) {
         if let index = images.firstIndex(where: { $0.id == id }), index > 0 {
+            let oldIndex = index
+            let newIndex = index - 1
             images.swapAt(index, index - 1) // Swap with the element below
+            
+            // [撤销/重做] 记录图层顺序变更
+            undoManager.recordAction(.reorder(imageId: id, oldIndex: oldIndex, newIndex: newIndex))
         }
     }
     

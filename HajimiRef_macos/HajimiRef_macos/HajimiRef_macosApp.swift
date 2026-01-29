@@ -48,23 +48,39 @@ struct HajimiRef_macosApp: App {
         // 使其易于发现并支持快捷键。
         .commands {
             // 自定义关于窗口
-            // 用我们自定义设计的 AboutView 替换标准的“关于”对话框。
+            // 用我们自定义设计的 AboutView 替换标准的"关于"对话框。
             CommandGroup(replacing: .appInfo) {
                 Button("About Hajimi Ref") {
                     openAboutWindow()
                 }
             }
             
+            // 编辑菜单：撤销/重做
+            // 添加撤销和重做命令
+            // 快捷键：Cmd + Z, Cmd + Shift + Z
+            CommandGroup(replacing: .undoRedo) {
+                Button(LocalizedStringKey("Undo")) {
+                    appState.undo()
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!appState.undoManager.canUndo)
+                
+                Button(LocalizedStringKey("Redo")) {
+                    appState.redo()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!appState.undoManager.canRedo)
+            }
+            
             // 文件菜单：导入
-            // 在“文件”菜单中添加“打开图片...”命令。
+            // 在"文件"菜单中添加"打开图片..."命令。
             // 快捷键：Cmd + O
             CommandGroup(replacing: .newItem) {
                 Button(LocalizedStringKey("Open Images...")) {
                     appState.importImages()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-            }
-            
+            }            
             // 文件菜单：保存/加载
             // 添加"保存看板"和"加载看板"命令以进行项目管理。
             // 快捷键：Cmd + S, Cmd + L

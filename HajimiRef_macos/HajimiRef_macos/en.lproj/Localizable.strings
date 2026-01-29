@@ -49,3 +49,10 @@
 "Board exported to:\n%@" = "Board exported to:\n%@";
 "Export Failed" = "Export Failed";
 "Failed to export the board as an image." = "Failed to export the board as an image.";
+
+/* Undo/Redo */
+"Undo" = "Undo";
+"Redo" = "Redo";
+
+/* Board */
+"Reset Board Size" = "Reset Board Size";

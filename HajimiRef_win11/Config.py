@@ -20,6 +20,9 @@ class Config:
     # 画板初始大小（世界坐标）/ Initial board size (world coordinates)
     initial_board_width = 2000
     initial_board_height = 1500
+    # 自动重置画板设置 / Auto reset board settings
+    auto_reset_board_enabled = False  # 是否启用自动重置画板
+    auto_reset_interval = 10  # 自动重置间隔（分钟）
 
     @classmethod
     def reset_defaults(cls):
@@ -35,6 +38,8 @@ class Config:
         cls.active_area_padding = 200
         cls.initial_board_width = 2000
         cls.initial_board_height = 1500
+        cls.auto_reset_board_enabled = False
+        cls.auto_reset_interval = 10
 
 def tr(key):
     """

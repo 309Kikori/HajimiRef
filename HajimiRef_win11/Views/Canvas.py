@@ -395,6 +395,49 @@ class RefView(QGraphicsView):
         half_h = Config.initial_board_height / 2
         self._board_bounds = QRectF(-half_w, -half_h, Config.initial_board_width, Config.initial_board_height)
     
+    def resetBoardToFitImages(self):
+        """
+        根据实际图片分布重置画板大小 / Reset board size based on actual image distribution
+        如果没有图片，则重置为默认大小
+        """
+        items = [item for item in self.scene().items() if isinstance(item, RefItem)]
+        
+        if not items:
+            # 没有图片时重置为默认大小
+            self.resetBoardBounds()
+            self.viewport().update()
+            return
+        
+        # 计算所有图片的边界框 / Calculate bounding box of all images
+        union_rect = QRectF()
+        for item in items:
+            union_rect = union_rect.united(item.sceneBoundingRect())
+        
+        # 添加边距 / Add padding
+        padding = Config.active_area_padding
+        union_rect.adjust(-padding, -padding, padding, padding)
+        
+        # 确保最小尺寸不小于初始大小 / Ensure minimum size is not smaller than initial size
+        min_width = Config.initial_board_width
+        min_height = Config.initial_board_height
+        
+        # 计算中心点
+        center = union_rect.center()
+        
+        # 如果计算出的尺寸小于最小尺寸，则扩展到最小尺寸
+        final_width = max(union_rect.width(), min_width)
+        final_height = max(union_rect.height(), min_height)
+        
+        # 以图片区域中心为中心创建新的画板边界
+        self._board_bounds = QRectF(
+            center.x() - final_width / 2,
+            center.y() - final_height / 2,
+            final_width,
+            final_height
+        )
+        
+        self.viewport().update()
+    
     def _drawGridInRect(self, painter, rect):
         """
         在指定区域内绘制网格点 / Draw grid dots within specified rect

@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import Vision
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import Combine
 
 @Observable
 class AppState {
@@ -15,6 +16,10 @@ class AppState {
     // [画板状态] 画板边界（固定初始范围，只扩展不收缩）
     // 初始画板大小：以原点为中心，宽高各1200
     var boardBounds: CGRect = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+    
+    // [自动重置画板] 定时器相关
+    private var autoResetTimer: Timer?
+    private var cancellables = Set<AnyCancellable>()
     
     // [交互状态] 临时拖拽偏移
     // 用于在拖拽过程中实时更新所有选中图片的位置，而不需要频繁提交到 images 数组。
@@ -34,7 +39,45 @@ class AppState {
         }
     }
     
-    init() {}
+    init() {
+        // 启动时检查是否需要开启自动重置定时器
+        setupAutoResetTimer()
+    }
+    
+    deinit {
+        autoResetTimer?.invalidate()
+    }
+    
+    // MARK: - Auto Reset Board Timer (自动重置画板定时器)
+    
+    /// 设置自动重置画板定时器
+    func setupAutoResetTimer() {
+        // 取消现有定时器
+        autoResetTimer?.invalidate()
+        autoResetTimer = nil
+        
+        // 检查是否启用自动重置
+        let enabled = UserDefaults.standard.bool(forKey: "autoResetBoardEnabled")
+        guard enabled else { return }
+        
+        // 获取间隔时间（分钟），默认10分钟
+        let intervalMinutes = UserDefaults.standard.integer(forKey: "autoResetBoardInterval")
+        let interval = intervalMinutes > 0 ? TimeInterval(intervalMinutes * 60) : 600 // 默认600秒 = 10分钟
+        
+        // 创建定时器
+        autoResetTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.resetBoardBounds()
+            }
+        }
+    }
+    
+    /// 更新自动重置设置（当用户修改设置时调用）
+    func updateAutoResetSettings(enabled: Bool, intervalMinutes: Int) {
+        UserDefaults.standard.set(enabled, forKey: "autoResetBoardEnabled")
+        UserDefaults.standard.set(intervalMinutes, forKey: "autoResetBoardInterval")
+        setupAutoResetTimer()
+    }
     
     // MARK: - Image Management
     // 处理应用程序内图片的生命周期。

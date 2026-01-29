@@ -31,6 +31,11 @@ class RefItem(QGraphicsPixmapItem):
         self._start_scale = 1.0
         self._start_mouse_pos = None
         self._anchor_scene_pos = None
+        
+        # Undo state: 记录拖动/缩放开始前的状态 / Record state before drag/scale
+        self._undo_start_pos = None
+        self._undo_start_scale = None
+        self._is_dragging = False
 
     def paint(self, painter, option, widget=None):
         """
@@ -134,13 +139,25 @@ class RefItem(QGraphicsPixmapItem):
             elif self._resize_corner == "br":
                 self._anchor_scene_pos = group_rect.topLeft()
             
-            # Store start scale and pos for all selected items
+            # Store start scale and pos for all selected items (including undo state)
             for item in selected_items:
                 if isinstance(item, RefItem):
                     item._start_scale = item.scale()
                     item._start_pos = item.scenePos()
+                    # 记录撤销状态 / Record undo state
+                    item._undo_start_pos = QPointF(item.pos())
+                    item._undo_start_scale = item.scale()
             
             event.accept()
+        elif event.button() == Qt.LeftButton:
+            # 记录拖动开始状态（用于撤销）/ Record drag start state (for undo)
+            self._is_dragging = True
+            selected_items = self.scene().selectedItems()
+            for item in selected_items:
+                if isinstance(item, RefItem):
+                    item._undo_start_pos = QPointF(item.pos())
+                    item._undo_start_scale = item.scale()
+            super().mousePressEvent(event)
         else:
             super().mousePressEvent(event)
 
@@ -180,12 +197,64 @@ class RefItem(QGraphicsPixmapItem):
             self._is_resizing = False
             self._resize_corner = None
             self.setCursor(Qt.ArrowCursor)
+            
+            # 创建缩放撤销命令 / Create scale undo command
+            view = self.scene().views()[0] if self.scene().views() else None
+            if view and hasattr(view, 'parent') and view.parent():
+                main_window = view.parent()
+                if hasattr(main_window, 'record_scale_action'):
+                    items_data = []
+                    for item in self.scene().selectedItems():
+                        if isinstance(item, RefItem) and item._undo_start_scale is not None:
+                            # 只有当缩放确实改变时才记录
+                            if abs(item._undo_start_scale - item.scale()) > 0.001 or \
+                               (item._undo_start_pos - item.pos()).manhattanLength() > 1:
+                                items_data.append((
+                                    item,
+                                    item._undo_start_scale,
+                                    item.scale(),
+                                    item._undo_start_pos,
+                                    QPointF(item.pos())
+                                ))
+                    if items_data:
+                        main_window.record_scale_action(items_data)
+            
             # Clean up temp attributes
             for item in self.scene().selectedItems():
                 if isinstance(item, RefItem):
                     if hasattr(item, '_start_scale'): del item._start_scale
                     if hasattr(item, '_start_pos'): del item._start_pos
+                    item._undo_start_pos = None
+                    item._undo_start_scale = None
             event.accept()
+        elif self._is_dragging:
+            self._is_dragging = False
+            
+            # 创建移动撤销命令 / Create move undo command
+            view = self.scene().views()[0] if self.scene().views() else None
+            if view and hasattr(view, 'parent') and view.parent():
+                main_window = view.parent()
+                if hasattr(main_window, 'record_move_action'):
+                    items_data = []
+                    for item in self.scene().selectedItems():
+                        if isinstance(item, RefItem) and item._undo_start_pos is not None:
+                            # 只有当位置确实改变时才记录
+                            if (item._undo_start_pos - item.pos()).manhattanLength() > 1:
+                                items_data.append((
+                                    item,
+                                    item._undo_start_pos,
+                                    QPointF(item.pos())
+                                ))
+                    if items_data:
+                        main_window.record_move_action(items_data)
+            
+            # 清理撤销状态 / Clean up undo state
+            for item in self.scene().selectedItems():
+                if isinstance(item, RefItem):
+                    item._undo_start_pos = None
+                    item._undo_start_scale = None
+            
+            super().mouseReleaseEvent(event)
         else:
             super().mouseReleaseEvent(event)
 

@@ -49,3 +49,10 @@
 "Board exported to:\n%@" = "画布已导出至:\n%@";
 "Export Failed" = "导出失败";
 "Failed to export the board as an image." = "无法将画布导出为图片。";
+
+/* Undo/Redo */
+"Undo" = "撤销";
+"Redo" = "重做";
+
+/* Board */
+"Reset Board Size" = "重置画板大小";

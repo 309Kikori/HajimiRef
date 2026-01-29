@@ -43,7 +43,10 @@ LANGUAGES = {
         "reset_board": "Reset Board Size",
         "auto_reset_board": "Auto Reset Board",
         "auto_reset_interval": "Auto Reset Interval (minutes)",
-        "board_settings": "Board"
+        "board_settings": "Board",
+        "edit": "Edit",
+        "undo": "Undo",
+        "redo": "Redo"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -85,6 +88,9 @@ LANGUAGES = {
         "reset_board": "重置画板大小",
         "auto_reset_board": "自动重置画板",
         "auto_reset_interval": "自动重置间隔（分钟）",
-        "board_settings": "画板"
+        "board_settings": "画板",
+        "edit": "编辑",
+        "undo": "撤销",
+        "redo": "重做"
     }
 }

@@ -11,6 +11,7 @@ from Config import Config, tr
 from Views.Canvas import RefItem, RefView
 from Views.SettingsDialog import SettingsDialog
 from ViewModels.MainViewModel import MainViewModel
+from Models.UndoManager import UndoManager, MoveCommand, ScaleCommand, AddItemCommand, DeleteItemsCommand, ClearBoardCommand, OrganizeItemsCommand
 
 class MainWindow(QMainWindow):
     """
@@ -26,6 +27,9 @@ class MainWindow(QMainWindow):
         
         self.vm = MainViewModel()
         
+        # 撤销/重做管理器 / Undo/Redo manager
+        self.undo_manager = UndoManager(max_history=100)
+        
         self.scene = QGraphicsScene()
         self.scene.setSceneRect(-50000, -50000, 100000, 100000) # Infinite-ish canvas
         
@@ -40,6 +44,17 @@ class MainWindow(QMainWindow):
         
         self.paste_shortcut = QShortcut(QKeySequence.Paste, self)
         self.paste_shortcut.activated.connect(self.paste_image)
+        
+        # 撤销/重做快捷键 / Undo/Redo shortcuts
+        self.undo_shortcut = QShortcut(QKeySequence.Undo, self)  # Ctrl+Z
+        self.undo_shortcut.activated.connect(self.undo_action)
+        
+        self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)  # Ctrl+Shift+Z
+        self.redo_shortcut.activated.connect(self.redo_action)
+        
+        # 备用重做快捷键 Ctrl+Y / Alternative redo shortcut
+        self.redo_shortcut2 = QShortcut(QKeySequence.Redo, self)  # Ctrl+Y
+        self.redo_shortcut2.activated.connect(self.redo_action)
         
         # Auto reset board timer
         self.auto_reset_timer = QTimer(self)
@@ -103,6 +118,19 @@ class MainWindow(QMainWindow):
         self.act_top.triggered.connect(self.toggle_always_on_top)
         settings_menu.addAction(self.act_top)
         
+        # 编辑菜单 / Edit menu
+        edit_menu = menubar.addMenu(tr("edit"))
+        
+        self.act_undo = QAction(tr("undo"), self)
+        self.act_undo.setShortcut(QKeySequence.Undo)
+        self.act_undo.triggered.connect(self.undo_action)
+        edit_menu.addAction(self.act_undo)
+        
+        self.act_redo = QAction(tr("redo"), self)
+        self.act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        self.act_redo.triggered.connect(self.redo_action)
+        edit_menu.addAction(self.act_redo)
+        
         help_menu = menubar.addMenu(tr("help"))
         act_about = QAction(tr("about"), self)
         act_about.triggered.connect(self.show_about)
@@ -153,7 +181,16 @@ class MainWindow(QMainWindow):
         """
         menu = QMenu(self)
         
-        # 仅当有选中的项目时，才显示“智能整理”选项
+        # 撤销/重做选项 / Undo/Redo options
+        undo_action = menu.addAction(tr("undo"), self.undo_action)
+        undo_action.setEnabled(self.undo_manager.can_undo())
+        
+        redo_action = menu.addAction(tr("redo"), self.redo_action)
+        redo_action.setEnabled(self.undo_manager.can_redo())
+        
+        menu.addSeparator()
+        
+        # 仅当有选中的项目时，才显示"智能整理"选项
         selected_items = self.scene.selectedItems()
         if selected_items:
             menu.addAction(tr("organize_items"), lambda: self.organize_items(selected_items))
@@ -182,6 +219,9 @@ class MainWindow(QMainWindow):
         """
         if not items:
             return
+        
+        # 记录原始位置用于撤销 / Record original positions for undo
+        original_positions = [(item, QPointF(item.pos())) for item in items if isinstance(item, RefItem)]
 
         # 1) 预快照尺寸并建立映射
         rects = []  # list of (w,h, item, orig_rect)
@@ -238,6 +278,16 @@ class MainWindow(QMainWindow):
                 dx = target_x - cur_tl.x()
                 dy = target_y - cur_tl.y()
                 item.setPos(item.pos() + QPointF(dx, dy))
+        
+        # 记录整理操作到撤销历史 / Record organize action to undo history
+        items_positions = []
+        for item, old_pos in original_positions:
+            new_pos = QPointF(item.pos())
+            if (old_pos - new_pos).manhattanLength() > 1:
+                items_positions.append((item, old_pos, new_pos))
+        
+        if items_positions:
+            self.undo_manager.push(OrganizeItemsCommand(items_positions))
 
     def add_images(self):
         """
@@ -271,9 +321,10 @@ class MainWindow(QMainWindow):
             data = ba.data()
             self.create_item_from_data(data, x, y)
 
-    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0):
+    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, record_undo=True):
         """
         从二进制数据创建图片项 / Create image item from binary data
+        record_undo: 是否记录到撤销历史 / Whether to record to undo history
         """
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
@@ -282,6 +333,10 @@ class MainWindow(QMainWindow):
             item.setScale(scale)
             item.setRotation(rotation)
             self.scene.addItem(item)
+            
+            # 记录添加操作到撤销历史 / Record add action to undo history
+            if record_undo:
+                self.undo_manager.push(AddItemCommand(self.scene, item))
         else:
             print("Failed to load pixmap from data")
 
@@ -289,7 +344,14 @@ class MainWindow(QMainWindow):
         """
         删除选中的图片 / Delete selected images
         """
-        for item in self.scene.selectedItems():
+        selected = [item for item in self.scene.selectedItems() if isinstance(item, RefItem)]
+        if not selected:
+            return
+        
+        # 记录删除操作到撤销历史 / Record delete action to undo history
+        self.undo_manager.push(DeleteItemsCommand(self.scene, selected))
+        
+        for item in selected:
             self.scene.removeItem(item)
 
     def paste_image(self):
@@ -333,7 +395,14 @@ class MainWindow(QMainWindow):
         """
         清空画布 / Clear board
         """
-        self.scene.clear()
+        items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        if items:
+            # 记录清空操作到撤销历史 / Record clear action to undo history
+            self.undo_manager.push(ClearBoardCommand(self.scene, items))
+        
+        # 移除所有 RefItem（而不是 clear，以便保留其他可能的场景元素）
+        for item in items:
+            self.scene.removeItem(item)
     
     def reset_board_to_fit_images(self):
         """
@@ -495,14 +564,54 @@ class MainWindow(QMainWindow):
         success, result = self.vm.load_board_data(path)
         
         if success:
-            self.clear_board()
+            # 清空画布但不记录撤销（加载看板是完整替换）
+            items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+            for item in items:
+                self.scene.removeItem(item)
+            
+            # 清空撤销历史 / Clear undo history
+            self.undo_manager.clear()
+            
             for img_data in result:
                 self.create_item_from_data(
                     img_data["data"], 
                     img_data["x"], 
                     img_data["y"],
                     img_data["scale"],
-                    img_data.get("rotation", 0)
+                    img_data.get("rotation", 0),
+                    record_undo=False  # 加载时不记录撤销
                 )
         else:
             QMessageBox.critical(self, tr("error"), tr("load_error").format(result))
+
+    # ========== 撤销/重做相关方法 / Undo/Redo related methods ==========
+    
+    def undo_action(self):
+        """
+        撤销操作 / Undo action
+        """
+        if self.undo_manager.undo():
+            self.view.viewport().update()
+    
+    def redo_action(self):
+        """
+        重做操作 / Redo action
+        """
+        if self.undo_manager.redo():
+            self.view.viewport().update()
+    
+    def record_move_action(self, items_data):
+        """
+        记录移动操作到撤销历史 / Record move action to undo history
+        items_data: [(item, old_pos, new_pos), ...]
+        """
+        if items_data:
+            self.undo_manager.push(MoveCommand(items_data))
+    
+    def record_scale_action(self, items_data):
+        """
+        记录缩放操作到撤销历史 / Record scale action to undo history
+        items_data: [(item, old_scale, new_scale, old_pos, new_pos), ...]
+        """
+        if items_data:
+            self.undo_manager.push(ScaleCommand(items_data))

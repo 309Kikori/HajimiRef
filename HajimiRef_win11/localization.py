@@ -46,7 +46,12 @@ LANGUAGES = {
         "board_settings": "Board",
         "edit": "Edit",
         "undo": "Undo",
-        "redo": "Redo"
+        "redo": "Redo",
+        "layer": "Layer",
+        "bring_forward": "Bring Forward",
+        "send_backward": "Send Backward",
+        "bring_to_front": "Bring to Front",
+        "send_to_back": "Send to Back"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -91,6 +96,11 @@ LANGUAGES = {
         "board_settings": "画板",
         "edit": "编辑",
         "undo": "撤销",
-        "redo": "重做"
+        "redo": "重做",
+        "layer": "层级",
+        "bring_forward": "上移一层",
+        "send_backward": "下移一层",
+        "bring_to_front": "移至顶层",
+        "send_to_back": "移至底层"
     }
 }

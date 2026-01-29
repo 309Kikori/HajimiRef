@@ -45,16 +45,8 @@ class MainWindow(QMainWindow):
         self.paste_shortcut = QShortcut(QKeySequence.Paste, self)
         self.paste_shortcut.activated.connect(self.paste_image)
         
-        # 撤销/重做快捷键 / Undo/Redo shortcuts
-        self.undo_shortcut = QShortcut(QKeySequence.Undo, self)  # Ctrl+Z
-        self.undo_shortcut.activated.connect(self.undo_action)
-        
-        self.redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)  # Ctrl+Shift+Z
-        self.redo_shortcut.activated.connect(self.redo_action)
-        
-        # 备用重做快捷键 Ctrl+Y / Alternative redo shortcut
-        self.redo_shortcut2 = QShortcut(QKeySequence.Redo, self)  # Ctrl+Y
-        self.redo_shortcut2.activated.connect(self.redo_action)
+        # 注意：撤销/重做快捷键已通过菜单栏 QAction 的 setShortcut 设置
+        # 不再需要额外的 QShortcut，否则会导致 "Ambiguous shortcut overload" 冲突
         
         # Auto reset board timer
         self.auto_reset_timer = QTimer(self)
@@ -123,11 +115,13 @@ class MainWindow(QMainWindow):
         
         self.act_undo = QAction(tr("undo"), self)
         self.act_undo.setShortcut(QKeySequence.Undo)
+        self.act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 确保在任何地方都能触发
         self.act_undo.triggered.connect(self.undo_action)
         edit_menu.addAction(self.act_undo)
         
         self.act_redo = QAction(tr("redo"), self)
         self.act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
+        self.act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 确保在任何地方都能触发
         self.act_redo.triggered.connect(self.redo_action)
         edit_menu.addAction(self.act_redo)
         

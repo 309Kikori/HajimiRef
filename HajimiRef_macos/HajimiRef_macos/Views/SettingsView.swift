@@ -57,10 +57,16 @@ struct SettingsView: View {
 }
 
 struct GeneralSettingsView: View {
+    @Environment(AppState.self) var appState
+    
     @AppStorage("showGrid") private var showGrid: Bool = true
     @AppStorage("canvasBgColorHex") private var canvasBgColorHex: String = "#1E1E1E"
     @AppStorage("gridColorHex") private var gridColorHex: String = "#404040"
     @AppStorage("appLanguage") private var appLanguage: String = "system"
+    
+    // [自动重置画板] 设置项
+    @AppStorage("autoResetBoardEnabled") private var autoResetBoardEnabled: Bool = false
+    @AppStorage("autoResetBoardInterval") private var autoResetBoardInterval: Int = 10
     
     // 绑定 ColorPicker 到 Hex 字符串
     var bgColorBinding: Binding<Color> {
@@ -114,6 +120,37 @@ struct GeneralSettingsView: View {
                     // 在 Form 布局中，缩进会导致标签对齐不一致，显得杂乱。
                     // 既然它是紧跟在开关下面的，上下文关系已经很明确了。
                 }
+            }
+            
+            // [画板设置] 自动重置画板
+            Section(header: Text(LocalizedStringKey("Board"))) {
+                // 自动重置画板开关
+                Toggle(LocalizedStringKey("Auto Reset Board"), isOn: $autoResetBoardEnabled)
+                    .help(LocalizedStringKey("Automatically reset board size based on image distribution."))
+                    .onChange(of: autoResetBoardEnabled) { _, newValue in
+                        appState.updateAutoResetSettings(enabled: newValue, intervalMinutes: autoResetBoardInterval)
+                    }
+                
+                // 间隔时间选择器
+                if autoResetBoardEnabled {
+                    Picker(LocalizedStringKey("Interval"), selection: $autoResetBoardInterval) {
+                        Text(LocalizedStringKey("5 minutes")).tag(5)
+                        Text(LocalizedStringKey("10 minutes")).tag(10)
+                        Text(LocalizedStringKey("15 minutes")).tag(15)
+                        Text(LocalizedStringKey("30 minutes")).tag(30)
+                        Text(LocalizedStringKey("60 minutes")).tag(60)
+                    }
+                    .help(LocalizedStringKey("How often to automatically reset the board size."))
+                    .onChange(of: autoResetBoardInterval) { _, newValue in
+                        appState.updateAutoResetSettings(enabled: autoResetBoardEnabled, intervalMinutes: newValue)
+                    }
+                }
+                
+                // 手动重置按钮
+                Button(LocalizedStringKey("Reset Board Now")) {
+                    appState.resetBoardBounds()
+                }
+                .help(LocalizedStringKey("Reset board size to fit current image distribution."))
             }
             
             // [优化] 移除显式的 Divider，Section 之间默认会有间距

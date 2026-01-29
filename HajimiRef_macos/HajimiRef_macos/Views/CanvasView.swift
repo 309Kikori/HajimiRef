@@ -621,6 +621,12 @@ struct ImageView: View {
                     
                     Divider()
                     
+                    Button(LocalizedStringKey("Reset Board Size")) {
+                        appState.resetBoardBounds()
+                    }
+                    
+                    Divider()
+                    
                     Button(LocalizedStringKey("Export Board as Image")) {
                         appState.exportBoardAsImage()
                     }
@@ -803,7 +809,7 @@ struct GridBackground: View {
 }
 
 // MARK: - Active Area Background
-/// [性能优化] 只在活动区域（图片所在区域）绘制浅色背景
+/// [性能优化] 只在画板区域（boardBounds）绘制浅色背景
 struct ActiveAreaBackground: View {
     var appState: AppState
     var activeColor: Color
@@ -813,10 +819,8 @@ struct ActiveAreaBackground: View {
     
     var body: some View {
         Canvas { context, size in
-            // 计算活动区域（世界坐标）
-            guard let worldBounds = appState.calculateAllImagesBounds(padding: 200) else {
-                return
-            }
+            // 使用画板边界（固定范围，只扩展不收缩）
+            let worldBounds = appState.boardBounds
             
             // 将世界坐标转换为屏幕坐标
             // 屏幕坐标 = (世界坐标 * scale) + offset + center
@@ -841,7 +845,7 @@ struct ActiveAreaBackground: View {
 }
 
 // MARK: - Optimized Grid Background
-/// [性能优化] 只在活动区域（图片所在区域）绘制点阵网格
+/// [性能优化] 只在画板区域（boardBounds）绘制点阵网格
 struct OptimizedGridBackground: View {
     var appState: AppState
     var offset: CGSize
@@ -851,10 +855,8 @@ struct OptimizedGridBackground: View {
     
     var body: some View {
         Canvas { context, size in
-            // 计算活动区域（世界坐标）
-            guard let worldBounds = appState.calculateAllImagesBounds(padding: 200) else {
-                return
-            }
+            // 使用画板边界（固定范围，只扩展不收缩）
+            let worldBounds = appState.boardBounds
             
             // 将世界坐标转换为屏幕坐标
             let centerX = size.width / 2
@@ -871,7 +873,7 @@ struct OptimizedGridBackground: View {
             let visibleMaxX = min(size.width, screenMaxX)
             let visibleMaxY = min(size.height, screenMaxY)
             
-            // 如果活动区域不在可见范围内，不绘制
+            // 如果画板区域不在可见范围内，不绘制
             guard visibleMinX < visibleMaxX && visibleMinY < visibleMaxY else {
                 return
             }
@@ -897,7 +899,7 @@ struct OptimizedGridBackground: View {
             var startY = offsetY.truncatingRemainder(dividingBy: gridStep)
             if startY < 0 { startY += gridStep }
             
-            // 调整起始点到可见活动区域内
+            // 调整起始点到可见画板区域内
             var drawStartX = startX
             while drawStartX < visibleMinX {
                 drawStartX += gridStep
@@ -929,7 +931,7 @@ struct OptimizedGridBackground: View {
                 }
             }
             
-            // Draw dots only within active area
+            // Draw dots only within board area
             for x in stride(from: drawStartX, to: visibleMaxX, by: actualGridStep) {
                 for y in stride(from: drawStartY, to: visibleMaxY, by: actualGridStep) {
                     let rect = CGRect(x: x - dotRadius, y: y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)

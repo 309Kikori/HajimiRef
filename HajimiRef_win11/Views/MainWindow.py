@@ -5,7 +5,7 @@ import base64
 import math
 from rectpack import newPacker
 from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
-from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF
+from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter
 from Config import Config, tr
 from Views.Canvas import RefItem, RefView
@@ -40,6 +40,11 @@ class MainWindow(QMainWindow):
         
         self.paste_shortcut = QShortcut(QKeySequence.Paste, self)
         self.paste_shortcut.activated.connect(self.paste_image)
+        
+        # Auto reset board timer
+        self.auto_reset_timer = QTimer(self)
+        self.auto_reset_timer.timeout.connect(self.auto_reset_board)
+        self.update_auto_reset_timer()
 
     def setup_menu(self):
         """
@@ -161,6 +166,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(tr("export_image"), self.export_board_to_image)
         menu.addAction(tr("export_to_clipboard"), self.export_board_to_clipboard)
+        menu.addSeparator()
+        menu.addAction(tr("reset_board"), self.reset_board_to_fit_images)
         menu.exec(self.view.mapToGlobal(pos))
 
     def organize_items(self, items):
@@ -327,6 +334,29 @@ class MainWindow(QMainWindow):
         清空画布 / Clear board
         """
         self.scene.clear()
+    
+    def reset_board_to_fit_images(self):
+        """
+        根据实际图片分布重置画板大小 / Reset board size based on actual image distribution
+        """
+        self.view.resetBoardToFitImages()
+    
+    def update_auto_reset_timer(self):
+        """
+        更新自动重置画板定时器 / Update auto reset board timer
+        """
+        if Config.auto_reset_board_enabled:
+            # 将分钟转换为毫秒
+            interval_ms = Config.auto_reset_interval * 60 * 1000
+            self.auto_reset_timer.start(interval_ms)
+        else:
+            self.auto_reset_timer.stop()
+    
+    def auto_reset_board(self):
+        """
+        自动重置画板（定时器回调）/ Auto reset board (timer callback)
+        """
+        self.view.resetBoardToFitImages()
 
     def save_board(self):
         """

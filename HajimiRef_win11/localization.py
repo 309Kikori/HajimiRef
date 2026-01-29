@@ -39,7 +39,11 @@ LANGUAGES = {
         "export_success": "Board exported successfully to:\n{}",
         "export_error": "Failed to export image.",
         "clipboard_success": "Image copied to clipboard.",
-        "clipboard_error": "Failed to copy image to clipboard."
+        "clipboard_error": "Failed to copy image to clipboard.",
+        "reset_board": "Reset Board Size",
+        "auto_reset_board": "Auto Reset Board",
+        "auto_reset_interval": "Auto Reset Interval (minutes)",
+        "board_settings": "Board"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -77,6 +81,10 @@ LANGUAGES = {
         "export_success": "画布已成功导出至:\n{}",
         "export_error": "导出图片失败。",
         "clipboard_success": "图片已复制到剪贴板。",
-        "clipboard_error": "复制图片到剪贴板失败。"
+        "clipboard_error": "复制图片到剪贴板失败。",
+        "reset_board": "重置画板大小",
+        "auto_reset_board": "自动重置画板",
+        "auto_reset_interval": "自动重置间隔（分钟）",
+        "board_settings": "画板"
     }
 }

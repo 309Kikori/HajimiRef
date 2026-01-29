@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QColorDialog, QSpinBox, QCheckBox, QTabWidget, QWidget, QComboBox)
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QColorDialog, QSpinBox, QCheckBox, QTabWidget, QWidget, QComboBox, QGroupBox)
 from Config import Config, tr
 
 class SettingsDialog(QDialog):
@@ -67,7 +67,36 @@ class SettingsDialog(QDialog):
 
         layout_app.addStretch()
         
-        # --- Tab 2: Language ---
+        # --- Tab 2: Board Settings ---
+        tab_board = QWidget()
+        self.tabs.addTab(tab_board, tr("board_settings"))
+        
+        layout_board = QVBoxLayout(tab_board)
+        
+        # Auto Reset Board Group
+        auto_reset_group = QGroupBox(tr("auto_reset_board"))
+        auto_reset_layout = QVBoxLayout(auto_reset_group)
+        
+        # Enable Auto Reset
+        self.chk_auto_reset = QCheckBox(tr("auto_reset_board"))
+        self.chk_auto_reset.setChecked(Config.auto_reset_board_enabled)
+        self.chk_auto_reset.toggled.connect(self.set_auto_reset_enabled)
+        auto_reset_layout.addWidget(self.chk_auto_reset)
+        
+        # Auto Reset Interval
+        interval_layout = QHBoxLayout()
+        interval_layout.addWidget(QLabel(tr("auto_reset_interval")))
+        self.spin_auto_reset_interval = QSpinBox()
+        self.spin_auto_reset_interval.setRange(1, 60)
+        self.spin_auto_reset_interval.setValue(Config.auto_reset_interval)
+        self.spin_auto_reset_interval.valueChanged.connect(self.set_auto_reset_interval)
+        interval_layout.addWidget(self.spin_auto_reset_interval)
+        auto_reset_layout.addLayout(interval_layout)
+        
+        layout_board.addWidget(auto_reset_group)
+        layout_board.addStretch()
+        
+        # --- Tab 3: Language ---
         tab_lang = QWidget()
         self.tabs.addTab(tab_lang, tr("language"))
         
@@ -89,7 +118,6 @@ class SettingsDialog(QDialog):
         layout_lang.addLayout(lang_layout)
         
         layout_lang.addStretch()
-
         # --- Bottom Buttons ---
         btn_layout = QHBoxLayout()
         
@@ -144,6 +172,22 @@ class SettingsDialog(QDialog):
         """
         Config.grid_enabled = val
         self.parent().view.viewport().update()
+    
+    def set_auto_reset_enabled(self, val):
+        """
+        设置是否启用自动重置画板 / Set auto reset board enabled
+        """
+        Config.auto_reset_board_enabled = val
+        if self.parent():
+            self.parent().update_auto_reset_timer()
+    
+    def set_auto_reset_interval(self, val):
+        """
+        设置自动重置间隔 / Set auto reset interval
+        """
+        Config.auto_reset_interval = val
+        if self.parent():
+            self.parent().update_auto_reset_timer()
         
     def change_language(self, index):
         """
@@ -157,8 +201,9 @@ class SettingsDialog(QDialog):
             self.parent().change_language(lang_code)
             # Refresh this dialog title/tabs
             self.setWindowTitle(tr("preferences"))
-            self.tabs.setTabText(0, tr("preferences")) # Or "Appearance"
-            self.tabs.setTabText(1, tr("language"))
+            self.tabs.setTabText(0, tr("appearance"))
+            self.tabs.setTabText(1, tr("board_settings"))
+            self.tabs.setTabText(2, tr("language"))
 
     def reset_defaults(self):
         """
@@ -170,6 +215,8 @@ class SettingsDialog(QDialog):
         self.update_color_btn(self.btn_grid_color, Config.grid_color)
         self.spin_grid_size.setValue(Config.grid_size)
         self.chk_grid.setChecked(Config.grid_enabled)
+        self.chk_auto_reset.setChecked(Config.auto_reset_board_enabled)
+        self.spin_auto_reset_interval.setValue(Config.auto_reset_interval)
         
         index = self.combo_lang.findData(Config.language)
         if index >= 0:

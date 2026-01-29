@@ -190,10 +190,19 @@ class MainWindow(QMainWindow):
         
         menu.addSeparator()
         
-        # 仅当有选中的项目时，才显示"智能整理"选项
+        # 仅当有选中的项目时，才显示"智能整理"和"层级"选项
         selected_items = self.scene.selectedItems()
         if selected_items:
             menu.addAction(tr("organize_items"), lambda: self.organize_items(selected_items))
+            
+            # 层级子菜单 / Layer submenu
+            layer_menu = menu.addMenu(tr("layer"))
+            layer_menu.addAction(tr("bring_forward"), lambda: self.bring_forward(selected_items))
+            layer_menu.addAction(tr("send_backward"), lambda: self.send_backward(selected_items))
+            layer_menu.addSeparator()
+            layer_menu.addAction(tr("bring_to_front"), lambda: self.bring_to_front(selected_items))
+            layer_menu.addAction(tr("send_to_back"), lambda: self.send_to_back(selected_items))
+            
             menu.addSeparator()
 
         menu.addAction(tr("open_image"), self.add_images)
@@ -615,3 +624,113 @@ class MainWindow(QMainWindow):
         """
         if items_data:
             self.undo_manager.push(ScaleCommand(items_data))
+    
+    # ========== 图层管理方法 / Layer management methods ==========
+    
+    def bring_forward(self, items):
+        """
+        将选中的图片上移一层 / Bring selected items one layer forward
+        """
+        ref_items = [item for item in items if isinstance(item, RefItem)]
+        if not ref_items:
+            return
+        
+        # 获取所有 RefItem 并按 z-value 排序
+        all_items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        all_items.sort(key=lambda x: x.zValue())
+        
+        # 找到最大 z-value
+        max_z = max(item.zValue() for item in all_items) if all_items else 0
+        
+        # 按 z-value 从高到低处理选中的项目，避免冲突
+        ref_items.sort(key=lambda x: x.zValue(), reverse=True)
+        
+        for item in ref_items:
+            current_z = item.zValue()
+            # 找到比当前 z-value 高一层的项目
+            higher_items = [i for i in all_items if i.zValue() > current_z and i not in ref_items]
+            if higher_items:
+                # 与最近的上层项目交换 z-value
+                next_higher = min(higher_items, key=lambda x: x.zValue())
+                item.setZValue(next_higher.zValue())
+                next_higher.setZValue(current_z)
+            else:
+                # 已经是最高层，增加 z-value
+                item.setZValue(max_z + 1)
+                max_z += 1
+        
+        self.view.viewport().update()
+    
+    def send_backward(self, items):
+        """
+        将选中的图片下移一层 / Send selected items one layer backward
+        """
+        ref_items = [item for item in items if isinstance(item, RefItem)]
+        if not ref_items:
+            return
+        
+        # 获取所有 RefItem 并按 z-value 排序
+        all_items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        all_items.sort(key=lambda x: x.zValue())
+        
+        # 找到最小 z-value
+        min_z = min(item.zValue() for item in all_items) if all_items else 0
+        
+        # 按 z-value 从低到高处理选中的项目，避免冲突
+        ref_items.sort(key=lambda x: x.zValue())
+        
+        for item in ref_items:
+            current_z = item.zValue()
+            # 找到比当前 z-value 低一层的项目
+            lower_items = [i for i in all_items if i.zValue() < current_z and i not in ref_items]
+            if lower_items:
+                # 与最近的下层项目交换 z-value
+                next_lower = max(lower_items, key=lambda x: x.zValue())
+                item.setZValue(next_lower.zValue())
+                next_lower.setZValue(current_z)
+            else:
+                # 已经是最低层，减小 z-value
+                item.setZValue(min_z - 1)
+                min_z -= 1
+        
+        self.view.viewport().update()
+    
+    def bring_to_front(self, items):
+        """
+        将选中的图片移至最顶层 / Bring selected items to front
+        """
+        ref_items = [item for item in items if isinstance(item, RefItem)]
+        if not ref_items:
+            return
+        
+        # 获取所有 RefItem 的最大 z-value
+        all_items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        max_z = max(item.zValue() for item in all_items) if all_items else 0
+        
+        # 按原始 z-value 排序，保持相对顺序
+        ref_items.sort(key=lambda x: x.zValue())
+        
+        for i, item in enumerate(ref_items):
+            item.setZValue(max_z + 1 + i)
+        
+        self.view.viewport().update()
+    
+    def send_to_back(self, items):
+        """
+        将选中的图片移至最底层 / Send selected items to back
+        """
+        ref_items = [item for item in items if isinstance(item, RefItem)]
+        if not ref_items:
+            return
+        
+        # 获取所有 RefItem 的最小 z-value
+        all_items = [item for item in self.scene.items() if isinstance(item, RefItem)]
+        min_z = min(item.zValue() for item in all_items) if all_items else 0
+        
+        # 按原始 z-value 排序（降序），保持相对顺序
+        ref_items.sort(key=lambda x: x.zValue(), reverse=True)
+        
+        for i, item in enumerate(ref_items):
+            item.setZValue(min_z - 1 - i)
+        
+        self.view.viewport().update()

@@ -683,12 +683,25 @@ struct ImageView: View {
                     
                     Divider()
                     
-                    Button(LocalizedStringKey("Bring to Front")) {
-                        appState.bringToFront(id: imageEntity.id)
-                    }
-                    
-                    Button(LocalizedStringKey("Send to Back")) {
-                        appState.sendToBack(id: imageEntity.id)
+                    // [图层管理] 层级子菜单
+                    Menu(LocalizedStringKey("Layer")) {
+                        Button(LocalizedStringKey("Bring Forward")) {
+                            appState.bringForward(id: imageEntity.id)
+                        }
+                        
+                        Button(LocalizedStringKey("Send Backward")) {
+                            appState.sendBackward(id: imageEntity.id)
+                        }
+                        
+                        Divider()
+                        
+                        Button(LocalizedStringKey("Bring to Front")) {
+                            appState.bringToFront(id: imageEntity.id)
+                        }
+                        
+                        Button(LocalizedStringKey("Send to Back")) {
+                            appState.sendToBack(id: imageEntity.id)
+                        }
                     }
                     
                     Divider()

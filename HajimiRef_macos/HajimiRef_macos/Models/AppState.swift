@@ -323,7 +323,12 @@ class AppState {
         panel.nameFieldStringValue = "board.sref"
         
         if panel.runModal() == .OK, let url = panel.url {
-            let boardData = BoardData(images: images)
+            // 保存时根据数组索引设置 zIndex，确保图层顺序保存
+            var imagesToSave = images
+            for i in 0..<imagesToSave.count {
+                imagesToSave[i].zIndex = CGFloat(i)
+            }
+            let boardData = BoardData(images: imagesToSave)
             do {
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(boardData)
@@ -344,7 +349,11 @@ class AppState {
                 let decoder = JSONDecoder()
                 let boardData = try decoder.decode(BoardData.self, from: data)
                 
-                self.images = boardData.images
+                // 加载时根据 zIndex 排序，确保图层顺序正确
+                var loadedImages = boardData.images
+                loadedImages.sort { $0.zIndex < $1.zIndex }
+                
+                self.images = loadedImages
                 self.canvasOffset = .zero
                 self.canvasScale = 1.0
             } catch {

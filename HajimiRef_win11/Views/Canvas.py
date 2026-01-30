@@ -298,6 +298,7 @@ class RefItem(QGraphicsPixmapItem):
             "y": pos.y(),
             "scale": self.scale(),
             "rotation": self.rotation(),
+            "zIndex": self.zValue(),  # 保存图层顺序 / Save layer order
             "data": b64_data
         }
 

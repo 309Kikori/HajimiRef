@@ -20,7 +20,7 @@ class MainViewModel:
         Saves the board data to a JSON file
         """
         data = {
-            "version": 2,
+            "version": 3,  # 版本3添加了zIndex字段支持图层顺序
             "images": items_data
         }
         try:
@@ -50,6 +50,7 @@ class MainViewModel:
                             "y": img_data.get("y", 0),
                             "scale": img_data.get("scale", 1.0),
                             "rotation": img_data.get("rotation", 0),
+                            "zIndex": img_data.get("zIndex", 0),  # 读取图层顺序 / Load layer order
                             "data": img_bytes
                         })
                     except Exception as decode_err:

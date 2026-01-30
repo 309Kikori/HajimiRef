@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
             data = ba.data()
             self.create_item_from_data(data, x, y)
 
-    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, record_undo=True):
+    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, zIndex=0, record_undo=True):
         """
         从二进制数据创建图片项 / Create image item from binary data
         record_undo: 是否记录到撤销历史 / Whether to record to undo history
@@ -335,6 +335,7 @@ class MainWindow(QMainWindow):
             item.setPos(x, y)
             item.setScale(scale)
             item.setRotation(rotation)
+            item.setZValue(zIndex)  # 设置图层顺序 / Set layer order
             self.scene.addItem(item)
             
             # 记录添加操作到撤销历史 / Record add action to undo history
@@ -582,6 +583,7 @@ class MainWindow(QMainWindow):
                     img_data["y"],
                     img_data["scale"],
                     img_data.get("rotation", 0),
+                    img_data.get("zIndex", 0),  # 加载图层顺序 / Load layer order
                     record_undo=False  # 加载时不记录撤销
                 )
         else:

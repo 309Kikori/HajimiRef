@@ -16,7 +16,7 @@ LANGUAGES = {
         "help": "Help",
         "about": "About",
         "exit": "Exit",
-        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Ctrl + Wheel: Scale Image\n- Delete: Remove Image",
+        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Ctrl + Wheel: Scale Image\n- Delete: Remove Image\n- G: Group Selected Images",
         "error": "Error",
         "save_error": "Failed to save file: {}",
         "load_error": "Failed to load file: {}",
@@ -51,7 +51,16 @@ LANGUAGES = {
         "bring_forward": "Bring Forward",
         "send_backward": "Send Backward",
         "bring_to_front": "Bring to Front",
-        "send_to_back": "Send to Back"
+        "send_to_back": "Send to Back",
+        # 组功能 / Group feature
+        "group": "Group",
+        "group_selected": "Group Selected",
+        "ungroup": "Ungroup",
+        "group_settings": "Group Settings",
+        "group_name": "Group Name",
+        "group_color": "Color",
+        "font_size": "Font Size",
+        "opacity": "Opacity"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -66,7 +75,7 @@ LANGUAGES = {
         "help": "帮助",
         "about": "关于",
         "exit": "退出",
-        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Ctrl + 滚轮: 缩放选中图片\n- Delete: 删除图片",
+        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Ctrl + 滚轮: 缩放选中图片\n- Delete: 删除图片\n- G: 打组选中图片",
         "error": "错误",
         "save_error": "保存文件失败: {}",
         "load_error": "读取文件失败: {}",
@@ -101,6 +110,15 @@ LANGUAGES = {
         "bring_forward": "上移一层",
         "send_backward": "下移一层",
         "bring_to_front": "移至顶层",
-        "send_to_back": "移至底层"
+        "send_to_back": "移至底层",
+        # 组功能 / Group feature
+        "group": "组",
+        "group_selected": "打组",
+        "ungroup": "解散组",
+        "group_settings": "组设置",
+        "group_name": "组名称",
+        "group_color": "颜色",
+        "font_size": "字体大小",
+        "opacity": "透明度"
     }
 }

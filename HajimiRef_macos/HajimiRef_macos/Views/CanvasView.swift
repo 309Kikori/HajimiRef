@@ -130,6 +130,12 @@ struct WindowAccessor: NSViewRepresentable {
                 return true
             }
             
+            // G 键打组 / G key to group
+            if event.charactersIgnoringModifiers == "g" {
+                appState.groupSelectedImages()
+                return true
+            }
+            
             if event.charactersIgnoringModifiers == "f" {
                 appState.centerContent()
                 return true
@@ -249,6 +255,16 @@ struct CanvasView: View {
                     .onTapGesture {
                         appState.selectedImageIds.removeAll()
                     }
+                
+                // 1.5 Groups Layer
+                // [视觉设计] 组渲染层，在图片下方
+                ZStack {
+                    ForEach(appState.groups) { group in
+                        GroupView(group: group)
+                    }
+                }
+                .offset(appState.canvasOffset)
+                .scaleEffect(appState.canvasScale)
                 
                 // 2. Images Layer
                 // [视觉设计] 这个 ZStack 容纳所有图片实体。
@@ -586,6 +602,11 @@ struct ImageView: View {
                                 // [撤销/重做] 记录批量移动操作（只有实际移动了才记录）
                                 if !moveChanges.isEmpty && (abs(finalOffset.width) > 0.1 || abs(finalOffset.height) > 0.1) {
                                     appState.undoManager.recordAction(.batchMove(changes: moveChanges))
+                                    
+                                    // 检查移动的图片是否移出了组 / Check if moved images are out of their groups
+                                    for change in moveChanges {
+                                        appState.checkImageOutOfGroup(imageId: change.imageId)
+                                    }
                                 }
                                 
                                 // 4. 重置状态
@@ -1055,6 +1076,395 @@ struct OptimizedGridBackground: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Group View
+/// 组视图，用于渲染图片组 / Group view for rendering image groups
+struct GroupView: View {
+    @Environment(AppState.self) var appState
+    var group: GroupEntity
+    
+    // [交互状态]
+    @State private var isDragging = false
+    @State private var dragStartPosition: CGPoint? = nil
+    @State private var memberStartPositions: [UUID: CGPoint] = [:]
+    
+    // [调整大小状态] / Resize state
+    @State private var isResizing = false
+    @State private var resizeCorner: String? = nil
+    @State private var resizeStartRect: CGRect? = nil
+    @State private var resizeStartMouse: CGPoint? = nil
+    
+    // [双击编辑状态] / Double click edit state
+    @State private var showNameEditor = false
+    @State private var editingName = ""
+    
+    var isSelected: Bool {
+        appState.selectedGroupId == group.id
+    }
+    
+    var body: some View {
+        ZStack {
+            // 组背景 / Group background
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: String(group.colorHex.prefix(7))).opacity(group.opacity))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isSelected ? Color.blue : Color(hex: String(group.colorHex.prefix(7))).opacity(min(group.opacity + 0.3, 1.0)),
+                            lineWidth: isSelected ? 3 : 2
+                        )
+                )
+            
+            // 调整大小手柄 / Resize handles (when selected)
+            if isSelected {
+                // 四个角的调整手柄 / Four corner resize handles
+                ForEach(["tl", "tr", "bl", "br"], id: \.self) { corner in
+                    ResizeHandleView(corner: corner, groupWidth: group.width, groupHeight: group.height)
+                        .gesture(
+                            resizeGesture(corner: corner)
+                        )
+                }
+            }
+            
+            // 组名称标签（左上角外侧）/ Group name label (outside top-left)
+            if !group.name.isEmpty {
+                VStack {
+                    HStack {
+                        Text(group.name)
+                            .font(.system(size: group.fontSize))
+                            .foregroundColor(Color(hex: String(group.colorHex.prefix(7))))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color(white: 0.15, opacity: 0.85))
+                            .cornerRadius(4)
+                            .offset(x: 0, y: -group.fontSize - 12)
+                            .onTapGesture(count: 2) {
+                                // 双击编辑名称 / Double click to edit name
+                                editingName = group.name
+                                showNameEditor = true
+                            }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .frame(width: group.width, height: group.height)
+        .position(x: group.x + group.width / 2, y: group.y + group.height / 2)
+        .gesture(
+            DragGesture(coordinateSpace: .named("Canvas"))
+                .onChanged { value in
+                    if !isDragging {
+                        isDragging = true
+                        dragStartPosition = CGPoint(x: group.x, y: group.y)
+                        
+                        // 记录所有成员的起始位置 / Record start positions of all members
+                        memberStartPositions.removeAll()
+                        for memberId in group.memberIds {
+                            if let img = appState.images.first(where: { $0.id == memberId }) {
+                                memberStartPositions[memberId] = CGPoint(x: img.x, y: img.y)
+                            }
+                        }
+                    }
+                    
+                    // 计算拖拽偏移 / Calculate drag offset
+                    let delta = CGSize(
+                        width: value.translation.width / appState.canvasScale,
+                        height: value.translation.height / appState.canvasScale
+                    )
+                    
+                    // 移动所有成员 / Move all members
+                    for memberId in group.memberIds {
+                        if let imgIndex = appState.images.firstIndex(where: { $0.id == memberId }),
+                           let startPos = memberStartPositions[memberId] {
+                            appState.images[imgIndex].x = startPos.x + delta.width
+                            appState.images[imgIndex].y = startPos.y + delta.height
+                        }
+                    }
+                    
+                    // 更新组位置 / Update group position
+                    if let groupIndex = appState.groups.firstIndex(where: { $0.id == group.id }),
+                       let startPos = dragStartPosition {
+                        appState.groups[groupIndex].x = startPos.x + delta.width
+                        appState.groups[groupIndex].y = startPos.y + delta.height
+                    }
+                }
+                .onEnded { value in
+                    isDragging = false
+                    
+                    // 记录撤销 / Record undo
+                    if let startPos = dragStartPosition,
+                       let groupIndex = appState.groups.firstIndex(where: { $0.id == group.id }) {
+                        let endPos = CGPoint(x: appState.groups[groupIndex].x, y: appState.groups[groupIndex].y)
+                        let delta = CGSize(width: endPos.x - startPos.x, height: endPos.y - startPos.y)
+                        
+                        if abs(delta.width) > 1 || abs(delta.height) > 1 {
+                            var memberMoves: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)] = []
+                            for (memberId, startMemberPos) in memberStartPositions {
+                                if let img = appState.images.first(where: { $0.id == memberId }) {
+                                    memberMoves.append((memberId, startMemberPos, CGPoint(x: img.x, y: img.y)))
+                                }
+                            }
+                            appState.undoManager.recordAction(.moveGroup(
+                                groupId: group.id,
+                                oldPosition: startPos,
+                                newPosition: endPos,
+                                memberMoves: memberMoves
+                            ))
+                        }
+                    }
+                    
+                    dragStartPosition = nil
+                    memberStartPositions.removeAll()
+                }
+        )
+        .onTapGesture {
+            appState.selectedGroupId = group.id
+            appState.selectedImageIds.removeAll()
+        }
+        .contextMenu {
+            Button(LocalizedStringKey("Group Settings")) {
+                appState.editingGroupId = group.id
+                appState.showGroupSettings = true
+            }
+            
+            Divider()
+            
+            Button(LocalizedStringKey("Ungroup")) {
+                appState.ungroupGroup(groupId: group.id)
+            }
+        }
+        .sheet(isPresented: $showNameEditor) {
+            // 名称编辑弹窗 / Name edit sheet
+            VStack(spacing: 16) {
+                Text(LocalizedStringKey("Group Name"))
+                    .font(.headline)
+                
+                TextField("", text: $editingName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+                
+                HStack {
+                    Button(LocalizedStringKey("Cancel")) {
+                        showNameEditor = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    
+                    Button(LocalizedStringKey("OK")) {
+                        if let index = appState.groups.firstIndex(where: { $0.id == group.id }) {
+                            appState.groups[index].name = editingName
+                        }
+                        showNameEditor = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(width: 280)
+        }
+    }
+    
+    // 调整大小手势 / Resize gesture
+    private func resizeGesture(corner: String) -> some Gesture {
+        DragGesture(coordinateSpace: .named("Canvas"))
+            .onChanged { value in
+                if !isResizing {
+                    isResizing = true
+                    resizeCorner = corner
+                    resizeStartRect = CGRect(x: group.x, y: group.y, width: group.width, height: group.height)
+                    resizeStartMouse = value.startLocation
+                }
+                
+                guard let startRect = resizeStartRect else { return }
+                
+                let delta = CGSize(
+                    width: value.translation.width / appState.canvasScale,
+                    height: value.translation.height / appState.canvasScale
+                )
+                
+                let minSize: CGFloat = 50
+                
+                if let index = appState.groups.firstIndex(where: { $0.id == group.id }) {
+                    var newX = startRect.minX
+                    var newY = startRect.minY
+                    var newWidth = startRect.width
+                    var newHeight = startRect.height
+                    
+                    switch corner {
+                    case "br":
+                        newWidth = max(minSize, startRect.width + delta.width)
+                        newHeight = max(minSize, startRect.height + delta.height)
+                    case "bl":
+                        let newW = max(minSize, startRect.width - delta.width)
+                        newX = startRect.minX + (startRect.width - newW)
+                        newWidth = newW
+                        newHeight = max(minSize, startRect.height + delta.height)
+                    case "tr":
+                        newWidth = max(minSize, startRect.width + delta.width)
+                        let newH = max(minSize, startRect.height - delta.height)
+                        newY = startRect.minY + (startRect.height - newH)
+                        newHeight = newH
+                    case "tl":
+                        let newW = max(minSize, startRect.width - delta.width)
+                        newX = startRect.minX + (startRect.width - newW)
+                        newWidth = newW
+                        let newH = max(minSize, startRect.height - delta.height)
+                        newY = startRect.minY + (startRect.height - newH)
+                        newHeight = newH
+                    default:
+                        break
+                    }
+                    
+                    appState.groups[index].x = newX
+                    appState.groups[index].y = newY
+                    appState.groups[index].width = newWidth
+                    appState.groups[index].height = newHeight
+                }
+            }
+            .onEnded { _ in
+                isResizing = false
+                
+                // 调整组边界后检测拉入图片 / Check for images to pull into group after resize
+                appState.checkImagesInGroupBounds(groupId: group.id)
+                
+                resizeCorner = nil
+                resizeStartRect = nil
+                resizeStartMouse = nil
+            }
+    }
+}
+
+// MARK: - Resize Handle View for Group
+struct ResizeHandleView: View {
+    var corner: String
+    var groupWidth: CGFloat
+    var groupHeight: CGFloat
+    
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 12, height: 12)
+            .overlay(
+                Circle()
+                    .stroke(Color.blue, lineWidth: 1)
+            )
+            .position(handlePosition)
+    }
+    
+    private var handlePosition: CGPoint {
+        switch corner {
+        case "tl": return CGPoint(x: 0, y: 0)
+        case "tr": return CGPoint(x: groupWidth, y: 0)
+        case "bl": return CGPoint(x: 0, y: groupHeight)
+        case "br": return CGPoint(x: groupWidth, y: groupHeight)
+        default: return CGPoint(x: 0, y: 0)
+        }
+    }
+}
+
+// MARK: - Group Settings Sheet
+/// 组设置弹窗 / Group settings sheet
+struct GroupSettingsSheet: View {
+    @Environment(AppState.self) var appState
+    @Environment(\.dismiss) var dismiss
+    var groupId: UUID
+    
+    @State private var name: String = ""
+    @State private var colorHex: String = "#6495ED"
+    @State private var opacity: Double = 0.3
+    @State private var fontSize: Double = 14
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(LocalizedStringKey("Group Settings"))
+                .font(.headline)
+            
+            // 组名称 / Group name
+            HStack {
+                Text(LocalizedStringKey("Name"))
+                    .frame(width: 80, alignment: .leading)
+                TextField("", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+            
+            // 颜色选择 / Color picker
+            HStack {
+                Text(LocalizedStringKey("Color"))
+                    .frame(width: 80, alignment: .leading)
+                ColorPicker("", selection: Binding(
+                    get: { Color(hex: colorHex) },
+                    set: { newColor in
+                        if let hex = newColor.toHex() {
+                            colorHex = hex
+                        }
+                    }
+                ))
+                .labelsHidden()
+            }
+            
+            // 透明度 / Opacity
+            HStack {
+                Text(LocalizedStringKey("Opacity"))
+                    .frame(width: 80, alignment: .leading)
+                Slider(value: $opacity, in: 0.1...1.0)
+                Text("\(Int(opacity * 100))%")
+                    .frame(width: 40)
+            }
+            
+            // 字体大小 / Font size
+            HStack {
+                Text(LocalizedStringKey("Font Size"))
+                    .frame(width: 80, alignment: .leading)
+                Slider(value: $fontSize, in: 8...72, step: 1)
+                Text("\(Int(fontSize))")
+                    .frame(width: 40)
+            }
+            
+            // 按钮 / Buttons
+            HStack {
+                Button(LocalizedStringKey("Cancel")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                
+                Button(LocalizedStringKey("OK")) {
+                    appState.updateGroupSettings(
+                        groupId: groupId,
+                        name: name,
+                        colorHex: colorHex,
+                        opacity: CGFloat(opacity),
+                        fontSize: CGFloat(fontSize)
+                    )
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 350)
+        .onAppear {
+            if let group = appState.groups.first(where: { $0.id == groupId }) {
+                name = group.name
+                colorHex = String(group.colorHex.prefix(7))
+                opacity = Double(group.opacity)
+                fontSize = Double(group.fontSize)
+            }
+        }
+    }
+}
+
+// MARK: - Color Extension for Hex Conversion
+extension Color {
+    func toHex() -> String? {
+        guard let components = NSColor(self).cgColor.components, components.count >= 3 else {
+            return nil
+        }
+        let r = Int(components[0] * 255)
+        let g = Int(components[1] * 255)
+        let b = Int(components[2] * 255)
+        return String(format: "#%02X%02X%02X", r, g, b)
     }
 }
 

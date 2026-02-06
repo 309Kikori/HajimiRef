@@ -56,3 +56,15 @@
 
 /* Board */
 "Reset Board Size" = "Reset Board Size";
+
+/* Group */
+"Group" = "Group";
+"Group Selected" = "Group Selected";
+"Ungroup" = "Ungroup";
+"Group Settings" = "Group Settings";
+"Name" = "Name";
+"Color" = "Color";
+"Opacity" = "Opacity";
+"Font Size" = "Font Size";
+"OK" = "OK";
+"Cancel" = "Cancel";

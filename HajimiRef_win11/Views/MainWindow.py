@@ -6,12 +6,12 @@ import math
 from rectpack import newPacker
 from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF, QTimer
-from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter
+from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter, QColor
 from Config import Config, tr
-from Views.Canvas import RefItem, RefView
+from Views.Canvas import RefItem, RefView, GroupItem, GroupSettingsDialog
 from Views.SettingsDialog import SettingsDialog
 from ViewModels.MainViewModel import MainViewModel
-from Models.UndoManager import UndoManager, MoveCommand, ScaleCommand, AddItemCommand, DeleteItemsCommand, ClearBoardCommand, OrganizeItemsCommand
+from Models.UndoManager import UndoManager, MoveCommand, ScaleCommand, AddItemCommand, DeleteItemsCommand, ClearBoardCommand, OrganizeItemsCommand, GroupCommand, UngroupCommand, GroupMoveCommand
 
 class MainWindow(QMainWindow):
     """
@@ -36,6 +36,9 @@ class MainWindow(QMainWindow):
         self.view = RefView(self.scene, self)
         self.setCentralWidget(self.view)
         
+        # 组管理 / Group management
+        self.groups = {}  # group_id -> GroupItem
+        
         self.setup_menu()
         
         # Shortcuts
@@ -44,6 +47,10 @@ class MainWindow(QMainWindow):
         
         self.paste_shortcut = QShortcut(QKeySequence.Paste, self)
         self.paste_shortcut.activated.connect(self.paste_image)
+        
+        # G键打组快捷键 / G key grouping shortcut
+        self.group_shortcut = QShortcut(QKeySequence("G"), self)
+        self.group_shortcut.activated.connect(self.group_selected_items)
         
         # 注意：撤销/重做快捷键已通过菜单栏 QAction 的 setShortcut 设置
         # 不再需要额外的 QShortcut，否则会导致 "Ambiguous shortcut overload" 冲突
@@ -184,18 +191,34 @@ class MainWindow(QMainWindow):
         
         menu.addSeparator()
         
+        # 检查是否右键点击了组 / Check if clicked on a group
+        scene_pos = self.view.mapToScene(pos)
+        clicked_item = self.scene.itemAt(scene_pos, self.view.transform())
+        
+        if isinstance(clicked_item, GroupItem):
+            # 组的右键菜单 / Group context menu
+            menu.addAction(tr("group_settings"), lambda: self.show_group_settings(clicked_item))
+            menu.addAction(tr("ungroup"), lambda: self.ungroup(clicked_item))
+            menu.addSeparator()
+        
         # 仅当有选中的项目时，才显示"智能整理"和"层级"选项
         selected_items = self.scene.selectedItems()
-        if selected_items:
-            menu.addAction(tr("organize_items"), lambda: self.organize_items(selected_items))
+        selected_ref_items = [item for item in selected_items if isinstance(item, RefItem)]
+        
+        if len(selected_ref_items) >= 2:
+            # 打组选项 / Group option
+            menu.addAction(tr("group_selected") + " (G)", self.group_selected_items)
+        
+        if selected_ref_items:
+            menu.addAction(tr("organize_items"), lambda: self.organize_items(selected_ref_items))
             
             # 层级子菜单 / Layer submenu
             layer_menu = menu.addMenu(tr("layer"))
-            layer_menu.addAction(tr("bring_forward"), lambda: self.bring_forward(selected_items))
-            layer_menu.addAction(tr("send_backward"), lambda: self.send_backward(selected_items))
+            layer_menu.addAction(tr("bring_forward"), lambda: self.bring_forward(selected_ref_items))
+            layer_menu.addAction(tr("send_backward"), lambda: self.send_backward(selected_ref_items))
             layer_menu.addSeparator()
-            layer_menu.addAction(tr("bring_to_front"), lambda: self.bring_to_front(selected_items))
-            layer_menu.addAction(tr("send_to_back"), lambda: self.send_to_back(selected_items))
+            layer_menu.addAction(tr("bring_to_front"), lambda: self.bring_to_front(selected_ref_items))
+            layer_menu.addAction(tr("send_to_back"), lambda: self.send_to_back(selected_ref_items))
             
             menu.addSeparator()
 
@@ -324,7 +347,7 @@ class MainWindow(QMainWindow):
             data = ba.data()
             self.create_item_from_data(data, x, y)
 
-    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, zIndex=0, record_undo=True):
+    def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, zIndex=0, group_id=None, record_undo=True):
         """
         从二进制数据创建图片项 / Create image item from binary data
         record_undo: 是否记录到撤销历史 / Whether to record to undo history
@@ -336,13 +359,17 @@ class MainWindow(QMainWindow):
             item.setScale(scale)
             item.setRotation(rotation)
             item.setZValue(zIndex)  # 设置图层顺序 / Set layer order
+            item.group_id = group_id  # 设置组ID / Set group ID
             self.scene.addItem(item)
             
             # 记录添加操作到撤销历史 / Record add action to undo history
             if record_undo:
                 self.undo_manager.push(AddItemCommand(self.scene, item))
+            
+            return item
         else:
             print("Failed to load pixmap from data")
+            return None
 
     def delete_selected(self):
         """
@@ -444,9 +471,23 @@ class MainWindow(QMainWindow):
             if isinstance(item, RefItem):
                 items_data.append(item.to_dict())
         
-        success, error = self.vm.save_board_data(path, items_data)
-        if not success:
-            QMessageBox.critical(self, tr("error"), tr("save_error").format(error))
+        # 保存组信息 / Save group info
+        groups_data = []
+        for group_id, group_item in self.groups.items():
+            groups_data.append(group_item.to_dict())
+        
+        # 构建包含组信息的数据 / Build data with group info
+        board_data = {
+            "version": 4,  # 版本4添加组功能 / Version 4 adds group feature
+            "images": items_data,
+            "groups": groups_data
+        }
+        
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(board_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            QMessageBox.critical(self, tr("error"), tr("save_error").format(str(e)))
 
     def export_board_to_image(self):
         """
@@ -564,30 +605,78 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, tr("load_board"), "", "SimpleRef Board (*.sref);;JSON (*.json)")
         if not path:
             return
-            
-        success, result = self.vm.load_board_data(path)
         
-        if success:
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                board_data = json.load(f)
+            
             # 清空画布但不记录撤销（加载看板是完整替换）
             items = [item for item in self.scene.items() if isinstance(item, RefItem)]
             for item in items:
                 self.scene.removeItem(item)
             
+            # 清空现有组 / Clear existing groups
+            for group_item in self.groups.values():
+                self.scene.removeItem(group_item)
+            self.groups.clear()
+            
             # 清空撤销历史 / Clear undo history
             self.undo_manager.clear()
             
-            for img_data in result:
+            # 处理不同版本的存档格式 / Handle different save format versions
+            if isinstance(board_data, list):
+                # 旧版本格式（纯数组）/ Old format (pure array)
+                images_data = board_data
+                groups_data = []
+            else:
+                # 新版本格式（带版本号的对象）/ New format (object with version)
+                images_data = board_data.get("images", [])
+                groups_data = board_data.get("groups", [])
+            
+            # 解码图片数据 / Decode image data
+            for img_data in images_data:
+                b64_data = img_data.get("data", "")
+                try:
+                    decoded_data = base64.b64decode(b64_data)
+                except:
+                    continue
+                
                 self.create_item_from_data(
-                    img_data["data"], 
-                    img_data["x"], 
-                    img_data["y"],
-                    img_data["scale"],
+                    decoded_data, 
+                    img_data.get("x", 0), 
+                    img_data.get("y", 0),
+                    img_data.get("scale", 1.0),
                     img_data.get("rotation", 0),
-                    img_data.get("zIndex", 0),  # 加载图层顺序 / Load layer order
-                    record_undo=False  # 加载时不记录撤销
+                    img_data.get("zIndex", 0),
+                    img_data.get("groupId", None),
+                    record_undo=False
                 )
-        else:
-            QMessageBox.critical(self, tr("error"), tr("load_error").format(result))
+            
+            # 加载组信息 / Load group info
+            for group_data in groups_data:
+                group_item = GroupItem(
+                    group_id=group_data.get("id"),
+                    name=group_data.get("name", ""),
+                    color=QColor(group_data.get("color", "#6495ED")),
+                    opacity=group_data.get("opacity", 0.3),
+                    font_size=group_data.get("font_size", 14)
+                )
+                rect = QRectF(
+                    group_data.get("x", 0),
+                    group_data.get("y", 0),
+                    group_data.get("width", 100),
+                    group_data.get("height", 100)
+                )
+                group_item.setRect(rect)
+                self.scene.addItem(group_item)
+                self.groups[group_item.group_id] = group_item
+            
+            # 更新所有组的边界 / Update all group bounds
+            for group_item in self.groups.values():
+                self.update_group_bounds(group_item)
+            
+        except Exception as e:
+            QMessageBox.critical(self, tr("error"), tr("load_error").format(str(e)))
 
     # ========== 撤销/重做相关方法 / Undo/Redo related methods ==========
     
@@ -612,6 +701,11 @@ class MainWindow(QMainWindow):
         """
         if items_data:
             self.undo_manager.push(MoveCommand(items_data))
+            
+            # 检查移动的图片是否移出了组 / Check if moved images are out of their groups
+            for item, old_pos, new_pos in items_data:
+                if isinstance(item, RefItem):
+                    self.check_image_out_of_group(item)
     
     def record_scale_action(self, items_data):
         """
@@ -730,3 +824,182 @@ class MainWindow(QMainWindow):
             item.setZValue(min_z - 1 - i)
         
         self.view.viewport().update()
+
+    # ========== 组管理相关方法 / Group management methods ==========
+    
+    def group_selected_items(self):
+        """
+        将选中的图片打组 / Group selected images
+        """
+        selected_items = [item for item in self.scene.selectedItems() if isinstance(item, RefItem)]
+        
+        if len(selected_items) < 2:
+            return
+        
+        # 创建新组 / Create new group
+        group_item = GroupItem()
+        self.scene.addItem(group_item)
+        self.groups[group_item.group_id] = group_item
+        
+        # 将选中的图片添加到组 / Add selected images to group
+        for item in selected_items:
+            item.group_id = group_item.group_id
+            group_item.add_member(item)
+        
+        # 更新组边界 / Update group bounds
+        self.update_group_bounds(group_item)
+        
+        # 记录撤销 / Record undo
+        self.undo_manager.push(GroupCommand(self.scene, group_item, selected_items, self.groups))
+        
+        self.view.viewport().update()
+    
+    def update_group_bounds(self, group_item):
+        """
+        更新组的边界 / Update group bounds
+        """
+        members = [item for item in self.scene.items() 
+                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        group_item.update_bounds(members)
+    
+    def update_all_group_bounds(self):
+        """
+        更新所有组的边界 / Update all group bounds
+        """
+        for group_item in self.groups.values():
+            self.update_group_bounds(group_item)
+    
+    def show_group_settings(self, group_item):
+        """
+        显示组设置对话框 / Show group settings dialog
+        """
+        dialog = GroupSettingsDialog(group_item, self)
+        if dialog.exec():
+            settings = dialog.get_settings()
+            group_item.group_name = settings['name']
+            group_item.font_size = settings['font_size']
+            group_item.group_color = settings['color']
+            group_item.group_opacity = settings['opacity']
+            group_item.update_appearance()
+            self.view.viewport().update()
+    
+    def ungroup(self, group_item):
+        """
+        解散组 / Ungroup
+        """
+        members = [item for item in self.scene.items() 
+                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        
+        # 记录撤销 / Record undo
+        self.undo_manager.push(UngroupCommand(self.scene, group_item, members, self.groups))
+        
+        # 移除成员的组ID / Remove group ID from members
+        for item in members:
+            item.group_id = None
+        
+        # 从场景和字典中移除组 / Remove group from scene and dict
+        if group_item.group_id in self.groups:
+            del self.groups[group_item.group_id]
+        self.scene.removeItem(group_item)
+        
+        self.view.viewport().update()
+    
+    def record_group_move_action(self, group_item, old_pos, new_pos):
+        """
+        记录组移动操作到撤销历史 / Record group move action to undo history
+        """
+        members = [item for item in self.scene.items() 
+                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        
+        # 计算移动偏移 / Calculate movement delta
+        delta = new_pos - old_pos
+        
+        # 获取每个成员的旧位置和新位置 / Get old and new positions for each member
+        members_data = []
+        for item in members:
+            # 新位置 = 当前位置，旧位置 = 当前位置 - delta
+            new_item_pos = QPointF(item.pos())
+            old_item_pos = new_item_pos - delta
+            members_data.append((item, old_item_pos, new_item_pos))
+        
+        # 将 pos() 的偏移合并到 rect() 中，并重置 pos() 为原点
+        # Merge pos() offset into rect() and reset pos() to origin
+        current_rect = group_item.rect()
+        new_rect = current_rect.translated(delta)
+        group_item.setRect(new_rect)
+        group_item.setPos(0, 0)  # 重置 pos() 为原点
+        
+        if members_data:
+            self.undo_manager.push(GroupMoveCommand(group_item, old_pos, new_pos, members_data))
+    
+    def check_images_in_group_bounds(self, group_item):
+        """
+        检测并拉入组边界内的图片 / Check and pull images inside group bounds into the group
+        当调整组边界大小时调用
+        """
+        # 使用 sceneBoundingRect 获取组在场景中的实际边界
+        group_rect = group_item.sceneBoundingRect()
+        
+        for item in self.scene.items():
+            if not isinstance(item, RefItem):
+                continue
+            
+            # 跳过已经在此组中的图片 / Skip images already in this group
+            if hasattr(item, 'group_id') and item.group_id == group_item.group_id:
+                continue
+            
+            # 获取图片的中心点 / Get image center point
+            item_center = item.scenePos()
+            
+            # 如果图片中心在组边界内，则将其加入组 / If image center is inside group bounds, add it to group
+            if group_rect.contains(item_center):
+                # 如果图片之前在其他组中，先从那个组移除 / If image was in another group, remove from that group first
+                if hasattr(item, 'group_id') and item.group_id is not None:
+                    old_group_id = item.group_id
+                    if old_group_id in self.groups:
+                        old_group = self.groups[old_group_id]
+                        old_group.remove_member(item)
+                        # 如果旧组只剩一个或零个成员，自动解散 / Auto ungroup if old group has 1 or 0 members left
+                        old_members = [i for i in self.scene.items() 
+                                       if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == old_group_id]
+                        if len(old_members) < 2:
+                            self.ungroup(old_group)
+                
+                # 将图片加入新组 / Add image to new group
+                item.group_id = group_item.group_id
+                group_item.add_member(item)
+        
+        self.view.viewport().update()
+    
+    def check_image_out_of_group(self, item):
+        """
+        检测图片是否完全移出了组边界 / Check if image is completely outside group bounds
+        如果是，则自动将其从组中移除
+        """
+        if not hasattr(item, 'group_id') or item.group_id is None:
+            return
+        
+        group_id = item.group_id
+        if group_id not in self.groups:
+            return
+        
+        group_item = self.groups[group_id]
+        # 使用 sceneBoundingRect 获取组在场景中的实际边界
+        group_rect = group_item.sceneBoundingRect()
+        
+        # 获取图片的边界矩形 / Get image bounding rect
+        item_rect = item.sceneBoundingRect()
+        
+        # 如果图片边界与组边界完全不相交，则移出组 / If image bounds don't intersect with group bounds at all, remove from group
+        if not group_rect.intersects(item_rect):
+            # 从组中移除图片 / Remove image from group
+            item.group_id = None
+            group_item.remove_member(item)
+            
+            # 如果组只剩一个或零个成员，自动解散 / Auto ungroup if group has 1 or 0 members left
+            members = [i for i in self.scene.items() 
+                       if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == group_id]
+            if len(members) < 2:
+                self.ungroup(group_item)
+            
+            self.view.viewport().update()

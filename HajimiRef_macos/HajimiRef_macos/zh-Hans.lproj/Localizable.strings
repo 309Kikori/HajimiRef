@@ -56,3 +56,15 @@
 
 /* Board */
 "Reset Board Size" = "重置画板大小";
+
+/* Group */
+"Group" = "组";
+"Group Selected" = "打组";
+"Ungroup" = "解散组";
+"Group Settings" = "组设置";
+"Name" = "名称";
+"Color" = "颜色";
+"Opacity" = "透明度";
+"Font Size" = "字体大小";
+"OK" = "确定";
+"Cancel" = "取消";

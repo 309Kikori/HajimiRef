@@ -9,9 +9,11 @@ import Combine
 @Observable
 class AppState {
     var images: [ImageEntity] = []
+    var groups: [GroupEntity] = []  // 组数据
     var canvasOffset: CGSize = .zero
     var canvasScale: CGFloat = 1.0
     var selectedImageIds: Set<UUID> = []
+    var selectedGroupId: UUID? = nil  // 当前选中的组
     
     // [撤销/重做] 撤销管理器
     var undoManager = CanvasUndoManager()
@@ -35,6 +37,10 @@ class AppState {
     // [交互状态] 多选缩放锚点
     // 用于在调整大小时确定缩放中心。
     var multiSelectAnchor: CGPoint = .zero
+    
+    // [组功能] 组设置弹窗控制
+    var showGroupSettings: Bool = false
+    var editingGroupId: UUID? = nil
     
     var isAlwaysOnTop: Bool = false {
         didSet {
@@ -82,6 +88,198 @@ class AppState {
         setupAutoResetTimer()
     }
     
+    // MARK: - Group Management (组管理)
+    
+    /// 将选中的图片打组 / Group selected images
+    func groupSelectedImages() {
+        guard selectedImageIds.count >= 2 else { return }
+        
+        // 创建新组 / Create new group
+        var newGroup = GroupEntity(name: NSLocalizedString("Group", comment: ""))
+        newGroup.memberIds = Array(selectedImageIds)
+        
+        // 更新图片的组ID / Update group ID of images
+        for id in selectedImageIds {
+            if let index = images.firstIndex(where: { $0.id == id }) {
+                images[index].groupId = newGroup.id
+            }
+        }
+        
+        // 更新组边界 / Update group bounds
+        updateGroupBounds(group: &newGroup)
+        
+        groups.append(newGroup)
+        
+        // 记录撤销 / Record undo
+        undoManager.recordAction(.createGroup(group: newGroup, memberIds: Array(selectedImageIds)))
+    }
+    
+    /// 更新组的边界 / Update group bounds
+    func updateGroupBounds(group: inout GroupEntity) {
+        let members = images.filter { group.memberIds.contains($0.id) }
+        guard !members.isEmpty else { return }
+        
+        var minX: CGFloat = .greatestFiniteMagnitude
+        var minY: CGFloat = .greatestFiniteMagnitude
+        var maxX: CGFloat = -.greatestFiniteMagnitude
+        var maxY: CGFloat = -.greatestFiniteMagnitude
+        
+        for img in members {
+            let w = (img.nsImage?.size.width ?? 100) * img.scale
+            let h = (img.nsImage?.size.height ?? 100) * img.scale
+            
+            let left = img.x - w/2
+            let right = img.x + w/2
+            let top = img.y - h/2
+            let bottom = img.y + h/2
+            
+            if left < minX { minX = left }
+            if right > maxX { maxX = right }
+            if top < minY { minY = top }
+            if bottom > maxY { maxY = bottom }
+        }
+        
+        let padding: CGFloat = 20
+        group.x = minX - padding
+        group.y = minY - padding
+        group.width = (maxX - minX) + padding * 2
+        group.height = (maxY - minY) + padding * 2
+    }
+    
+    /// 更新所有组的边界 / Update all group bounds
+    func updateAllGroupBounds() {
+        for i in 0..<groups.count {
+            updateGroupBounds(group: &groups[i])
+        }
+    }
+    
+    /// 解散组 / Ungroup
+    func ungroupGroup(groupId: UUID) {
+        guard let index = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        let group = groups[index]
+        
+        // 记录撤销 / Record undo
+        undoManager.recordAction(.deleteGroup(group: group))
+        
+        // 移除图片的组ID / Remove group ID from images
+        for memberId in group.memberIds {
+            if let imgIndex = images.firstIndex(where: { $0.id == memberId }) {
+                images[imgIndex].groupId = nil
+            }
+        }
+        
+        groups.remove(at: index)
+        selectedGroupId = nil
+    }
+    
+    /// 更新组设置 / Update group settings
+    func updateGroupSettings(groupId: UUID, name: String, colorHex: String, opacity: CGFloat, fontSize: CGFloat) {
+        guard let index = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        
+        let oldGroup = groups[index]
+        
+        groups[index].name = name
+        groups[index].colorHex = colorHex
+        groups[index].opacity = opacity
+        groups[index].fontSize = fontSize
+        
+        // 记录撤销 / Record undo
+        undoManager.recordAction(.updateGroup(oldGroup: oldGroup, newGroup: groups[index]))
+    }
+    
+    /// 移动组（包括所有成员）/ Move group (including all members)
+    func moveGroup(groupId: UUID, by delta: CGSize) {
+        guard let index = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        
+        // 移动所有成员 / Move all members
+        for memberId in groups[index].memberIds {
+            if let imgIndex = images.firstIndex(where: { $0.id == memberId }) {
+                images[imgIndex].x += delta.width
+                images[imgIndex].y += delta.height
+            }
+        }
+        
+        // 更新组边界 / Update group bounds
+        groups[index].x += delta.width
+        groups[index].y += delta.height
+    }
+    
+    /// 获取指定位置的组 / Get group at position
+    func groupAt(position: CGPoint) -> GroupEntity? {
+        for group in groups.reversed() {
+            if group.bounds.contains(position) {
+                return group
+            }
+        }
+        return nil
+    }
+    
+    /// 检测并拉入组边界内的图片 / Check and pull images inside group bounds into the group
+    /// 当调整组边界大小时调用
+    func checkImagesInGroupBounds(groupId: UUID) {
+        guard let groupIndex = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        let group = groups[groupIndex]
+        let groupRect = group.bounds
+        
+        for i in 0..<images.count {
+            // 跳过已经在此组中的图片 / Skip images already in this group
+            if images[i].groupId == groupId {
+                continue
+            }
+            
+            // 获取图片的中心点 / Get image center point
+            let imageCenter = CGPoint(x: images[i].x, y: images[i].y)
+            
+            // 如果图片中心在组边界内，则将其加入组 / If image center is inside group bounds, add it to group
+            if groupRect.contains(imageCenter) {
+                // 如果图片之前在其他组中，先从那个组移除 / If image was in another group, remove from that group first
+                if let oldGroupId = images[i].groupId,
+                   let oldGroupIndex = groups.firstIndex(where: { $0.id == oldGroupId }) {
+                    groups[oldGroupIndex].memberIds.removeAll { $0 == images[i].id }
+                    // 如果旧组只剩一个或零个成员，自动解散 / Auto ungroup if old group has 1 or 0 members left
+                    if groups[oldGroupIndex].memberIds.count < 2 {
+                        ungroupGroup(groupId: oldGroupId)
+                    }
+                }
+                
+                // 将图片加入新组 / Add image to new group
+                images[i].groupId = groupId
+                if let groupIndex = groups.firstIndex(where: { $0.id == groupId }) {
+                    groups[groupIndex].memberIds.append(images[i].id)
+                }
+            }
+        }
+    }
+    
+    /// 检测图片是否完全移出了组边界 / Check if image is completely outside group bounds
+    /// 如果是，则自动将其从组中移除
+    func checkImageOutOfGroup(imageId: UUID) {
+        guard let imageIndex = images.firstIndex(where: { $0.id == imageId }),
+              let groupId = images[imageIndex].groupId,
+              let groupIndex = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        
+        let group = groups[groupIndex]
+        let groupRect = group.bounds
+        
+        // 获取图片的边界矩形 / Get image bounding rect
+        let img = images[imageIndex]
+        let w = (img.nsImage?.size.width ?? 100) * img.scale
+        let h = (img.nsImage?.size.height ?? 100) * img.scale
+        let imageRect = CGRect(x: img.x - w/2, y: img.y - h/2, width: w, height: h)
+        
+        // 如果图片边界与组边界完全不相交，则移出组 / If image bounds don't intersect with group bounds at all, remove from group
+        if !groupRect.intersects(imageRect) {
+            // 从组中移除图片 / Remove image from group
+            images[imageIndex].groupId = nil
+            groups[groupIndex].memberIds.removeAll { $0 == imageId }
+            
+            // 如果组只剩一个或零个成员，自动解散 / Auto ungroup if group has 1 or 0 members left
+            if groups[groupIndex].memberIds.count < 2 {
+                ungroupGroup(groupId: groupId)
+            }
+        }
+    }
+    
     // MARK: - Image Management
     // 处理应用程序内图片的生命周期。
     
@@ -114,6 +312,15 @@ class AppState {
         if let index = images.firstIndex(where: { $0.id == id }) {
             let image = images[index]
             undoManager.recordAction(.removeImage(image: image, index: index))
+            
+            // 如果图片属于某个组，从组中移除 / If image belongs to a group, remove from group
+            if let groupId = image.groupId, let groupIndex = groups.firstIndex(where: { $0.id == groupId }) {
+                groups[groupIndex].memberIds.removeAll { $0 == id }
+                // 如果组只剩一个或零个成员，自动解散组
+                if groups[groupIndex].memberIds.count < 2 {
+                    ungroupGroup(groupId: groupId)
+                }
+            }
         }
         
         images.removeAll { $0.id == id }
@@ -122,12 +329,14 @@ class AppState {
     
     func clearBoard() {
         // [撤销/重做] 记录清空画板操作
-        if !images.isEmpty {
-            undoManager.recordAction(.clearBoard(images: images))
+        if !images.isEmpty || !groups.isEmpty {
+            undoManager.recordAction(.clearBoard(images: images, groups: groups))
         }
         
         images.removeAll()
+        groups.removeAll()
         selectedImageIds.removeAll()
+        selectedGroupId = nil
         // Reset canvas view to default state
         canvasOffset = .zero
         canvasScale = 1.0
@@ -328,7 +537,7 @@ class AppState {
             for i in 0..<imagesToSave.count {
                 imagesToSave[i].zIndex = CGFloat(i)
             }
-            let boardData = BoardData(images: imagesToSave)
+            let boardData = BoardData(images: imagesToSave, groups: groups)
             do {
                 let encoder = JSONEncoder()
                 let data = try encoder.encode(boardData)
@@ -354,6 +563,9 @@ class AppState {
                 loadedImages.sort { $0.zIndex < $1.zIndex }
                 
                 self.images = loadedImages
+                self.groups = boardData.groups
+                self.selectedImageIds.removeAll()
+                self.selectedGroupId = nil
                 self.canvasOffset = .zero
                 self.canvasScale = 1.0
             } catch {

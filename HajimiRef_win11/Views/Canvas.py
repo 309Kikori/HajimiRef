@@ -1,9 +1,448 @@
 import base64
-from PySide6.QtWidgets import (QGraphicsView, QGraphicsPixmapItem, QGraphicsItem, QStyleOptionGraphicsItem)
-from PySide6.QtCore import Qt, QByteArray, QBuffer, QPointF, QRectF, QMimeData, QLineF
-from PySide6.QtGui import QPixmap, QImage, QPainter, QCursor, QColor, QPen, QDragEnterEvent, QDropEvent, QMouseEvent
+import uuid
+from PySide6.QtWidgets import (QGraphicsView, QGraphicsPixmapItem, QGraphicsItem, QStyleOptionGraphicsItem, 
+                               QGraphicsRectItem, QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                               QLineEdit, QSpinBox, QSlider, QPushButton, QColorDialog, QInputDialog)
+from PySide6.QtCore import Qt, QByteArray, QBuffer, QPointF, QRectF, QMimeData, QLineF, QTimer
+from PySide6.QtGui import QPixmap, QImage, QPainter, QCursor, QColor, QPen, QDragEnterEvent, QDropEvent, QMouseEvent, QBrush, QFont, QPainterPath
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from Config import Config, tr
+
+# --- Group Settings Dialog ---
+class GroupSettingsDialog(QDialog):
+    """
+    组设置对话框 / Group settings dialog
+    """
+    def __init__(self, group_item, parent=None):
+        super().__init__(parent)
+        self.group_item = group_item
+        self.setWindowTitle(tr("group_settings"))
+        self.setMinimumWidth(300)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # 名称设置 / Name setting
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel(tr("group_name")))
+        self.name_edit = QLineEdit(self.group_item.group_name)
+        name_layout.addWidget(self.name_edit)
+        layout.addLayout(name_layout)
+        
+        # 字体大小设置 / Font size setting
+        font_layout = QHBoxLayout()
+        font_layout.addWidget(QLabel(tr("font_size")))
+        self.font_spin = QSpinBox()
+        self.font_spin.setRange(8, 72)
+        self.font_spin.setValue(self.group_item.font_size)
+        font_layout.addWidget(self.font_spin)
+        layout.addLayout(font_layout)
+        
+        # 颜色设置 / Color setting
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel(tr("group_color")))
+        self.color_btn = QPushButton()
+        self.current_color = self.group_item.group_color
+        self.update_color_button()
+        self.color_btn.clicked.connect(self.pick_color)
+        color_layout.addWidget(self.color_btn)
+        layout.addLayout(color_layout)
+        
+        # 透明度设置 / Opacity setting
+        opacity_layout = QHBoxLayout()
+        opacity_layout.addWidget(QLabel(tr("opacity")))
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(10, 100)
+        self.opacity_slider.setValue(int(self.group_item.group_opacity * 100))
+        self.opacity_label = QLabel(f"{int(self.group_item.group_opacity * 100)}%")
+        self.opacity_slider.valueChanged.connect(lambda v: self.opacity_label.setText(f"{v}%"))
+        opacity_layout.addWidget(self.opacity_slider)
+        opacity_layout.addWidget(self.opacity_label)
+        layout.addLayout(opacity_layout)
+        
+        # 按钮 / Buttons
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton(tr("ok"))
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton(tr("cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+    
+    def update_color_button(self):
+        self.color_btn.setStyleSheet(f"background-color: {self.current_color.name()}; min-width: 60px; min-height: 25px;")
+    
+    def pick_color(self):
+        color = QColorDialog.getColor(self.current_color, self)
+        if color.isValid():
+            self.current_color = color
+            self.update_color_button()
+    
+    def get_settings(self):
+        return {
+            'name': self.name_edit.text(),
+            'font_size': self.font_spin.value(),
+            'color': self.current_color,
+            'opacity': self.opacity_slider.value() / 100.0
+        }
+
+# --- Group Item ---
+class GroupItem(QGraphicsRectItem):
+    """
+    组项目，用于将多个图片打组 / Group item for grouping multiple images
+    """
+    # 预设的好看颜色 / Preset nice colors
+    PRESET_COLORS = [
+        QColor(100, 149, 237, 128),  # 矢车菊蓝
+        QColor(144, 238, 144, 128),  # 浅绿色
+        QColor(255, 182, 193, 128),  # 浅粉色
+        QColor(255, 218, 185, 128),  # 桃色
+        QColor(221, 160, 221, 128),  # 梅红色
+        QColor(176, 224, 230, 128),  # 淡蓝色
+        QColor(250, 250, 210, 128),  # 柠檬绸色
+        QColor(230, 230, 250, 128),  # 薰衣草色
+    ]
+    _color_index = 0
+    
+    def __init__(self, group_id=None, name="", color=None, opacity=0.3, font_size=14):
+        super().__init__()
+        self.group_id = group_id or str(uuid.uuid4())
+        self.group_name = name or tr("group")
+        self.font_size = font_size
+        self.group_opacity = opacity
+        
+        # 自动分配颜色 / Auto assign color
+        if color is None:
+            color = GroupItem.PRESET_COLORS[GroupItem._color_index % len(GroupItem.PRESET_COLORS)]
+            GroupItem._color_index += 1
+        self.group_color = color
+        
+        # 设置项目属性 / Set item properties
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+        self.setAcceptHoverEvents(True)
+        self.setZValue(-100)  # 组在图片下方 / Group is below images
+        
+        # 成员图片ID列表 / Member image IDs
+        self.member_ids = []
+        
+        # 撤销状态 / Undo state
+        self._undo_start_pos = None
+        self._is_dragging = False
+        
+        # 调整大小状态 / Resize state
+        self._is_resizing = False
+        self._resize_corner = None
+        self._resize_start_rect = None
+        self._resize_start_mouse = None
+        
+        self.update_appearance()
+    
+    def update_appearance(self):
+        """更新组的外观 / Update group appearance"""
+        color = QColor(self.group_color)
+        color.setAlphaF(self.group_opacity)
+        self.setBrush(QBrush(color))
+        
+        # 边框颜色稍深 / Border color slightly darker
+        border_color = QColor(self.group_color)
+        border_color.setAlphaF(min(self.group_opacity + 0.3, 1.0))
+        pen = QPen(border_color)
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+    
+    def _name_label_local_rect(self):
+        """返回名称标签在 item 局部坐标中的区域（不依赖 lod）/ Return name label rect in item local coords (lod-independent)"""
+        rect = self.rect()
+        label_height = self.font_size + 20  # 足够容纳标签
+        return QRectF(rect.left(), rect.top() - label_height, max(rect.width(), 200), label_height)
+    
+    def boundingRect(self):
+        """重写 boundingRect，包含名称标签区域 / Override boundingRect to include name label area"""
+        rect = super().boundingRect()
+        if self.group_name:
+            rect = rect.united(self._name_label_local_rect())
+        return rect
+    
+    def shape(self):
+        """重写 shape，包含名称标签区域，使 Qt 事件分发能正确路由到此 item / Override shape to include name label area for proper event routing"""
+        path = QPainterPath()
+        path.addRect(self.rect())
+        if self.group_name:
+            path.addRect(self._name_label_local_rect())
+        return path
+    
+    def add_member(self, item):
+        """添加成员到组 / Add member to group"""
+        if hasattr(item, 'group_id'):
+            item.group_id = self.group_id
+            if item not in self.member_ids:
+                self.member_ids.append(id(item))
+    
+    def remove_member(self, item):
+        """从组中移除成员 / Remove member from group"""
+        if hasattr(item, 'group_id') and item.group_id == self.group_id:
+            item.group_id = None
+            if id(item) in self.member_ids:
+                self.member_ids.remove(id(item))
+    
+    def update_bounds(self, items):
+        """根据成员项目更新组边界 / Update group bounds based on member items"""
+        if not items:
+            return
+        
+        # 计算所有成员的边界 / Calculate bounds of all members
+        padding = 20
+        union_rect = QRectF()
+        for item in items:
+            if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
+                union_rect = union_rect.united(item.sceneBoundingRect())
+        
+        if not union_rect.isEmpty():
+            union_rect.adjust(-padding, -padding, padding, padding)
+            self.setRect(union_rect)
+    
+    def paint(self, painter, option, widget=None):
+        """绘制组和名称标签 / Paint group and name label"""
+        super().paint(painter, option, widget)
+        
+        rect = self.rect()
+        
+        # 计算屏幕空间大小 / Calculate screen-space size
+        lod = QStyleOptionGraphicsItem.levelOfDetailFromTransform(painter.worldTransform())
+        if lod < 0.00001:
+            lod = 1
+        
+        # 绘制名称标签（位于组外侧左上角）/ Draw name label (outside top-left)
+        if self.group_name:
+            font = QFont()
+            font.setPixelSize(int(self.font_size / lod))
+            painter.setFont(font)
+            
+            # 文字颜色 / Text color
+            text_color = QColor(self.group_color)
+            text_color.setAlphaF(1.0)
+            painter.setPen(text_color)
+            
+            # 计算文本位置（左上角外侧）/ Calculate text position (outside top-left)
+            fm = painter.fontMetrics()
+            text_width = fm.horizontalAdvance(self.group_name)
+            text_height = fm.height()
+            padding_h = 6 / lod
+            padding_v = 3 / lod
+            
+            # 标签位于组左上角上方 / Label above the top-left corner of the group
+            bg_x = rect.left()
+            bg_y = rect.top() - text_height - padding_v * 2
+            bg_w = text_width + padding_h * 2
+            bg_h = text_height + padding_v * 2
+            
+            # 绘制背景 / Draw background
+            bg_rect = QRectF(bg_x, bg_y, bg_w, bg_h)
+            bg_color = QColor(40, 40, 40, 200)
+            painter.fillRect(bg_rect, bg_color)
+            
+            # 绘制文字 / Draw text
+            text_x = bg_x + padding_h
+            text_y = bg_y + padding_v + fm.ascent()
+            painter.drawText(QPointF(text_x, text_y), self.group_name)
+        
+        # 绘制选中状态和调整手柄 / Draw selection state and resize handles
+        if self.isSelected():
+            pen = QPen(QColor("#2a82da"))
+            pen.setWidth(3)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect)
+            
+            # 绘制调整大小手柄 / Draw resize handles
+            handle_size = 10 / lod
+            painter.setBrush(QColor("white"))
+            pen = QPen(QColor("#2a82da"))
+            pen.setWidth(1)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            
+            corners = [
+                rect.topLeft(),
+                rect.topRight(), 
+                rect.bottomLeft(),
+                rect.bottomRight()
+            ]
+            for corner in corners:
+                painter.drawEllipse(corner, handle_size / 2, handle_size / 2)
+    
+    def hoverMoveEvent(self, event):
+        """处理鼠标悬停事件，检测调整大小手柄 / Handle hover event, detect resize handles"""
+        if self.isSelected():
+            pos = event.pos()
+            rect = self.rect()
+            
+            # 计算边距 / Calculate margin
+            views = self.scene().views() if self.scene() else []
+            view_scale = views[0].transform().m11() if views else 1.0
+            margin = 20 / view_scale
+            
+            corners = {
+                "tl": rect.topLeft(),
+                "tr": rect.topRight(),
+                "bl": rect.bottomLeft(),
+                "br": rect.bottomRight()
+            }
+            
+            self._resize_corner = None
+            for corner_name, corner_pos in corners.items():
+                if (pos - corner_pos).manhattanLength() < margin:
+                    if corner_name in ["tl", "br"]:
+                        self.setCursor(Qt.SizeFDiagCursor)
+                    else:
+                        self.setCursor(Qt.SizeBDiagCursor)
+                    self._resize_corner = corner_name
+                    break
+            else:
+                self.setCursor(Qt.ArrowCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+        
+        super().hoverMoveEvent(event)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            # 检查是否点击了调整手柄 / Check if clicked on resize handle
+            if self._resize_corner:
+                self._is_resizing = True
+                self._resize_start_rect = QRectF(self.rect())
+                self._resize_start_mouse = event.scenePos()
+                event.accept()
+                return
+            
+            self._is_dragging = True
+            self._undo_start_pos = QPointF(self.pos())  # 使用 pos() 而不是 rect().topLeft()
+            self._drag_start_rect_pos = QPointF(self.rect().topLeft())  # 保存 rect 的初始位置
+            
+            # 同时记录所有成员的起始位置 / Record start positions of all members
+            self._members_start_pos = {}
+            scene = self.scene()
+            if scene:
+                for item in scene.items():
+                    if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
+                        self._members_start_pos[id(item)] = QPointF(item.pos())
+        
+        super().mousePressEvent(event)
+    
+    def mouseDoubleClickEvent(self, event):
+        """处理双击事件，双击名称标签快速编辑 / Handle double click, edit name label"""
+        if event.button() == Qt.LeftButton and self.group_name:
+            click_pos = event.pos()  # item 局部坐标 / Item local coordinates
+            if self._name_label_local_rect().contains(click_pos):
+                self._edit_name()
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+    
+    def _edit_name(self):
+        """打开名称编辑对话框 / Open name edit dialog"""
+        view = self.scene().views()[0] if self.scene() and self.scene().views() else None
+        if view:
+            text, ok = QInputDialog.getText(
+                view, tr("group_name"), tr("group_name") + ":",
+                QLineEdit.Normal, self.group_name
+            )
+            if ok and text:
+                self.group_name = text
+                self.update()
+    
+    def mouseMoveEvent(self, event):
+        if self._is_resizing and self._resize_start_rect is not None:
+            # 调整大小逻辑 / Resize logic
+            delta = event.scenePos() - self._resize_start_mouse
+            new_rect = QRectF(self._resize_start_rect)
+            
+            min_size = 50  # 最小尺寸
+            
+            if self._resize_corner == "br":
+                new_rect.setBottomRight(new_rect.bottomRight() + QPointF(delta.x(), delta.y()))
+            elif self._resize_corner == "bl":
+                new_rect.setBottomLeft(new_rect.bottomLeft() + QPointF(delta.x(), delta.y()))
+            elif self._resize_corner == "tr":
+                new_rect.setTopRight(new_rect.topRight() + QPointF(delta.x(), delta.y()))
+            elif self._resize_corner == "tl":
+                new_rect.setTopLeft(new_rect.topLeft() + QPointF(delta.x(), delta.y()))
+            
+            # 确保最小尺寸 / Ensure minimum size
+            if new_rect.width() >= min_size and new_rect.height() >= min_size:
+                self.setRect(new_rect)
+            
+            event.accept()
+            return
+        
+        if self._is_dragging and self._undo_start_pos is not None:
+            # 计算移动量（基于 pos() 的变化）/ Calculate movement delta (based on pos() change)
+            delta = self.pos() - self._undo_start_pos
+            
+            # 移动所有成员 / Move all members
+            scene = self.scene()
+            if scene:
+                for item in scene.items():
+                    if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
+                        if id(item) in self._members_start_pos:
+                            item.setPos(self._members_start_pos[id(item)] + delta)
+        
+        super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if self._is_resizing:
+            self._is_resizing = False
+            
+            # 调整组边界后检测拉入图片 / Check for images to pull into group after resize
+            view = self.scene().views()[0] if self.scene() and self.scene().views() else None
+            if view and hasattr(view, 'parent') and view.parent():
+                main_window = view.parent()
+                if hasattr(main_window, 'check_images_in_group_bounds'):
+                    main_window.check_images_in_group_bounds(self)
+            
+            self._resize_corner = None
+            self._resize_start_rect = None
+            self._resize_start_mouse = None
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+            return
+        
+        if self._is_dragging:
+            self._is_dragging = False
+            
+            # 创建撤销命令 / Create undo command
+            view = self.scene().views()[0] if self.scene() and self.scene().views() else None
+            if view and hasattr(view, 'parent') and view.parent():
+                main_window = view.parent()
+                if hasattr(main_window, 'record_group_move_action'):
+                    if self._undo_start_pos is not None:
+                        current_pos = self.pos()
+                        delta = current_pos - self._undo_start_pos
+                        if delta.manhattanLength() > 1:
+                            main_window.record_group_move_action(self, self._undo_start_pos, current_pos)
+            
+            self._undo_start_pos = None
+            self._members_start_pos = {}
+        
+        super().mouseReleaseEvent(event)
+    
+    def to_dict(self):
+        """序列化组信息 / Serialize group info"""
+        return {
+            "id": self.group_id,
+            "name": self.group_name,
+            "color": self.group_color.name(),
+            "opacity": self.group_opacity,
+            "font_size": self.font_size,
+            "x": self.rect().x(),
+            "y": self.rect().y(),
+            "width": self.rect().width(),
+            "height": self.rect().height()
+        }
 
 # --- Graphics Item ---
 class RefItem(QGraphicsPixmapItem):
@@ -36,6 +475,9 @@ class RefItem(QGraphicsPixmapItem):
         self._undo_start_pos = None
         self._undo_start_scale = None
         self._is_dragging = False
+        
+        # 组ID / Group ID
+        self.group_id = None
 
     def paint(self, painter, option, widget=None):
         """
@@ -299,7 +741,8 @@ class RefItem(QGraphicsPixmapItem):
             "scale": self.scale(),
             "rotation": self.rotation(),
             "zIndex": self.zValue(),  # 保存图层顺序 / Save layer order
-            "data": b64_data
+            "data": b64_data,
+            "groupId": self.group_id  # 保存组ID / Save group ID
         }
 
 # --- Graphics View ---
@@ -343,6 +786,9 @@ class RefView(QGraphicsView):
         half_w = Config.initial_board_width / 2
         half_h = Config.initial_board_height / 2
         self._board_bounds = QRectF(-half_w, -half_h, Config.initial_board_width, Config.initial_board_height)
+        
+        # 组管理 / Group management
+        self._groups = {}  # group_id -> GroupItem
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """
@@ -635,12 +1081,18 @@ class RefView(QGraphicsView):
 
     def keyPressEvent(self, event):
         """
-        处理按键按下事件 (空格键平移) / Handle key press (Space for panning)
+        处理按键按下事件 (空格键平移, G键打组) / Handle key press (Space for panning, G for grouping)
         """
         if event.key() == Qt.Key_Space:
             self._space_pressed = True
             if not self._is_panning:
                 self.setCursor(Qt.OpenHandCursor)
+        elif event.key() == Qt.Key_G:
+            # G键打组 / G key to group
+            if hasattr(self, 'parent') and self.parent():
+                main_window = self.parent()
+                if hasattr(main_window, 'group_selected_items'):
+                    main_window.group_selected_items()
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):

@@ -30,7 +30,19 @@ enum UndoableAction {
     case reorder(imageId: UUID, oldIndex: Int, newIndex: Int)
     
     /// 清空画板
-    case clearBoard(images: [ImageEntity])
+    case clearBoard(images: [ImageEntity], groups: [GroupEntity])
+    
+    /// 创建组
+    case createGroup(group: GroupEntity, memberIds: [UUID])
+    
+    /// 删除组
+    case deleteGroup(group: GroupEntity)
+    
+    /// 更新组设置
+    case updateGroup(oldGroup: GroupEntity, newGroup: GroupEntity)
+    
+    /// 移动组
+    case moveGroup(groupId: UUID, oldPosition: CGPoint, newPosition: CGPoint, memberMoves: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)])
 }
 
 // MARK: - Undo Manager (撤销管理器)
@@ -171,9 +183,47 @@ class CanvasUndoManager {
                 appState.images.insert(image, at: safeIndex)
             }
             
-        case .clearBoard(let images):
-            // 撤销清空画板：恢复所有图片
+        case .clearBoard(let images, let groups):
+            // 撤销清空画板：恢复所有图片和组
             appState.images = images
+            appState.groups = groups
+            
+        case .createGroup(let group, _):
+            // 撤销创建组：删除组并移除成员的组ID
+            for memberId in group.memberIds {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == memberId }) {
+                    appState.images[imgIndex].groupId = nil
+                }
+            }
+            appState.groups.removeAll { $0.id == group.id }
+            
+        case .deleteGroup(let group):
+            // 撤销删除组：恢复组并恢复成员的组ID
+            appState.groups.append(group)
+            for memberId in group.memberIds {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == memberId }) {
+                    appState.images[imgIndex].groupId = group.id
+                }
+            }
+            
+        case .updateGroup(let oldGroup, _):
+            // 撤销更新组：恢复到旧设置
+            if let index = appState.groups.firstIndex(where: { $0.id == oldGroup.id }) {
+                appState.groups[index] = oldGroup
+            }
+            
+        case .moveGroup(let groupId, let oldPosition, _, let memberMoves):
+            // 撤销移动组：恢复组和成员位置
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].x = oldPosition.x
+                appState.groups[index].y = oldPosition.y
+            }
+            for move in memberMoves {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == move.imageId }) {
+                    appState.images[imgIndex].x = move.oldPosition.x
+                    appState.images[imgIndex].y = move.oldPosition.y
+                }
+            }
         }
     }
     
@@ -235,10 +285,49 @@ class CanvasUndoManager {
                 appState.images.insert(image, at: safeIndex)
             }
             
-        case .clearBoard(_):
-            // 重做清空画板：清空所有图片
+        case .clearBoard(_, _):
+            // 重做清空画板：清空所有图片和组
             appState.images.removeAll()
+            appState.groups.removeAll()
             appState.selectedImageIds.removeAll()
+            appState.selectedGroupId = nil
+            
+        case .createGroup(let group, let memberIds):
+            // 重做创建组：恢复组并恢复成员的组ID
+            appState.groups.append(group)
+            for memberId in memberIds {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == memberId }) {
+                    appState.images[imgIndex].groupId = group.id
+                }
+            }
+            
+        case .deleteGroup(let group):
+            // 重做删除组：删除组并移除成员的组ID
+            for memberId in group.memberIds {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == memberId }) {
+                    appState.images[imgIndex].groupId = nil
+                }
+            }
+            appState.groups.removeAll { $0.id == group.id }
+            
+        case .updateGroup(_, let newGroup):
+            // 重做更新组：应用新设置
+            if let index = appState.groups.firstIndex(where: { $0.id == newGroup.id }) {
+                appState.groups[index] = newGroup
+            }
+            
+        case .moveGroup(let groupId, _, let newPosition, let memberMoves):
+            // 重做移动组：应用新位置
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].x = newPosition.x
+                appState.groups[index].y = newPosition.y
+            }
+            for move in memberMoves {
+                if let imgIndex = appState.images.firstIndex(where: { $0.id == move.imageId }) {
+                    appState.images[imgIndex].x = move.newPosition.x
+                    appState.images[imgIndex].y = move.newPosition.y
+                }
+            }
         }
     }
 }

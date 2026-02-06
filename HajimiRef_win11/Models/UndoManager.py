@@ -204,6 +204,133 @@ class OrganizeItemsCommand(Command):
         return f"整理 {len(self._items_positions)} 个图片"
 
 
+class GroupCommand(Command):
+    """
+    打组命令 / Group command
+    """
+    def __init__(self, scene, group_item, members: List, groups_dict: Dict):
+        self._scene = scene
+        self._group_item = group_item
+        self._members = members
+        self._groups_dict = groups_dict
+        self._group_id = group_item.group_id
+    
+    def undo(self):
+        # 移除成员的组ID / Remove group ID from members
+        for item in self._members:
+            if hasattr(item, 'group_id'):
+                item.group_id = None
+        
+        # 从场景和字典中移除组 / Remove group from scene and dict
+        if self._group_item.scene():
+            self._scene.removeItem(self._group_item)
+        if self._group_id in self._groups_dict:
+            del self._groups_dict[self._group_id]
+    
+    def redo(self):
+        # 恢复成员的组ID / Restore group ID to members
+        for item in self._members:
+            if hasattr(item, 'group_id'):
+                item.group_id = self._group_id
+        
+        # 重新添加组到场景和字典 / Re-add group to scene and dict
+        if not self._group_item.scene():
+            self._scene.addItem(self._group_item)
+        self._groups_dict[self._group_id] = self._group_item
+        
+        # 更新组边界 / Update group bounds
+        self._group_item.update_bounds(self._members)
+    
+    def description(self) -> str:
+        return f"打组 {len(self._members)} 个图片"
+
+
+class UngroupCommand(Command):
+    """
+    解散组命令 / Ungroup command
+    """
+    def __init__(self, scene, group_item, members: List, groups_dict: Dict):
+        self._scene = scene
+        self._group_item = group_item
+        self._members = members
+        self._groups_dict = groups_dict
+        self._group_id = group_item.group_id
+        
+        # 保存组的状态 / Save group state
+        self._group_name = group_item.group_name
+        self._group_color = group_item.group_color
+        self._group_opacity = group_item.group_opacity
+        self._font_size = group_item.font_size
+        self._rect = group_item.rect()
+    
+    def undo(self):
+        # 恢复成员的组ID / Restore group ID to members
+        for item in self._members:
+            if hasattr(item, 'group_id'):
+                item.group_id = self._group_id
+        
+        # 重新添加组到场景和字典 / Re-add group to scene and dict
+        if not self._group_item.scene():
+            self._scene.addItem(self._group_item)
+        self._groups_dict[self._group_id] = self._group_item
+    
+    def redo(self):
+        # 移除成员的组ID / Remove group ID from members
+        for item in self._members:
+            if hasattr(item, 'group_id'):
+                item.group_id = None
+        
+        # 从场景和字典中移除组 / Remove group from scene and dict
+        if self._group_item.scene():
+            self._scene.removeItem(self._group_item)
+        if self._group_id in self._groups_dict:
+            del self._groups_dict[self._group_id]
+    
+    def description(self) -> str:
+        return f"解散组 ({len(self._members)} 个图片)"
+
+
+class GroupMoveCommand(Command):
+    """
+    移动组命令 / Group move command
+    """
+    def __init__(self, group_item, old_pos: QPointF, new_pos: QPointF, members_data: List[tuple]):
+        """
+        members_data: [(item, old_pos, new_pos), ...]
+        """
+        self._group_item = group_item
+        self._old_pos = old_pos
+        self._new_pos = new_pos
+        self._members_data = members_data
+    
+    def undo(self):
+        # 恢复组位置 / Restore group position
+        delta = self._old_pos - self._new_pos
+        rect = self._group_item.rect()
+        rect.translate(delta)
+        self._group_item.setRect(rect)
+        
+        # 恢复所有成员位置 / Restore all member positions
+        for item, old_pos, new_pos in self._members_data:
+            if item.scene():
+                item.setPos(old_pos)
+    
+    def redo(self):
+        # 应用组位置 / Apply group position
+        delta = self._new_pos - self._old_pos
+        rect = self._group_item.rect()
+        rect.translate(delta)
+        self._group_item.setRect(rect)
+        
+        # 应用所有成员位置 / Apply all member positions
+        for item, old_pos, new_pos in self._members_data:
+            if item.scene():
+                item.setPos(new_pos)
+    
+    def description(self) -> str:
+        return f"移动组 ({len(self._members_data)} 个图片)"
+
+
 class UndoManager:
     """
     撤销/重做管理器 / Undo/Redo manager

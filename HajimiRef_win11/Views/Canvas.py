@@ -1012,6 +1012,25 @@ class RefView(QGraphicsView):
         zoom_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
         self.scale(zoom_factor, zoom_factor)
 
+    def mouseDoubleClickEvent(self, event):
+        """
+        处理双击事件：优先检查是否双击到了组名称标签 / Handle double click: check group name label first
+        因为 GroupItem 的 zValue 为 -100（在图片下方），且 RubberBandDrag 模式会拦截空白区域的事件，
+        所以必须在 View 层主动检查并分发事件到 GroupItem
+        """
+        if event.button() == Qt.LeftButton:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            # 遍历所有 GroupItem，检查是否双击到了名称标签区域
+            for item in self.scene().items():
+                if isinstance(item, GroupItem) and item.group_name:
+                    # 将场景坐标转换为 GroupItem 的 item 局部坐标
+                    local_pos = item.mapFromScene(scene_pos)
+                    if item._name_label_local_rect().contains(local_pos):
+                        item._edit_name()
+                        event.accept()
+                        return
+        super().mouseDoubleClickEvent(event)
+
     def mousePressEvent(self, event):
         """
         处理鼠标按下事件，用于平移 / Handle mouse press for panning

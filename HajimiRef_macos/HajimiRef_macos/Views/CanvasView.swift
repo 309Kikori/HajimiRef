@@ -1129,29 +1129,35 @@ struct GroupView: View {
             }
             
             // 组名称标签（左上角外侧）/ Group name label (outside top-left)
-            if !group.name.isEmpty {
-                VStack {
-                    HStack {
-                        Text(group.name)
-                            .font(.system(size: group.fontSize))
-                            .foregroundColor(Color(hex: String(group.colorHex.prefix(7))))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color(white: 0.15, opacity: 0.85))
-                            .cornerRadius(4)
-                            .offset(x: 0, y: -group.fontSize - 12)
-                            .onTapGesture(count: 2) {
-                                // 双击编辑名称 / Double click to edit name
-                                editingName = group.name
-                                showNameEditor = true
-                            }
-                        Spacer()
-                    }
-                    Spacer()
-                }
-            }
+            // 注意：不使用 .offset()，因为 .offset 只是视觉偏移，不会改变 hit testing 区域
+            // 改用 overlay + GeometryReader 实现正确的点击区域定位
+            // (名称标签在 .frame/.position 之外单独处理，见下方 overlay)
         }
         .frame(width: group.width, height: group.height)
+        // 组名称标签 overlay（使用 allowsHitTesting + 独立手势，避免被 DragGesture 抢占）
+        .overlay(alignment: .topLeading) {
+            if !group.name.isEmpty {
+                Text(group.name)
+                    .font(.system(size: group.fontSize))
+                    .foregroundColor(Color(hex: String(group.colorHex.prefix(7))))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(white: 0.15, opacity: 0.85))
+                    .cornerRadius(4)
+                    .fixedSize()  // 防止文本被截断
+                    .alignmentGuide(.top) { d in d[.bottom] + 4 }  // 将标签推到组框上方
+                    .onTapGesture(count: 2) {
+                        // 双击编辑名称 / Double click to edit name
+                        editingName = group.name
+                        showNameEditor = true
+                    }
+                    .onTapGesture(count: 1) {
+                        // 单击选中组（防止单击穿透到下层）
+                        appState.selectedGroupId = group.id
+                        appState.selectedImageIds.removeAll()
+                    }
+            }
+        }
         .position(x: group.x + group.width / 2, y: group.y + group.height / 2)
         .gesture(
             DragGesture(coordinateSpace: .named("Canvas"))

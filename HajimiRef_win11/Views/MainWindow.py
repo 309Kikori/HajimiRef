@@ -314,6 +314,15 @@ class MainWindow(QMainWindow):
         
         if items_positions:
             self.undo_manager.push(OrganizeItemsCommand(items_positions))
+        
+        # 整理后更新相关组的边界，避免图片溢出组框 / Update related group bounds after organizing to prevent overflow
+        affected_group_ids = set()
+        for item in items:
+            if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id is not None:
+                affected_group_ids.add(item.group_id)
+        for gid in affected_group_ids:
+            if gid in self.groups:
+                self.update_group_bounds(self.groups[gid])
 
     def add_images(self):
         """
@@ -934,12 +943,38 @@ class MainWindow(QMainWindow):
     
     def check_images_in_group_bounds(self, group_item):
         """
-        检测并拉入组边界内的图片 / Check and pull images inside group bounds into the group
-        当调整组边界大小时调用
+        检测组边界调整后的成员变化 / Check member changes after group bounds resize
+        1. 将框内的新图片拉入组
+        2. 将不再在框内的现有成员移出组
         """
-        # 使用 sceneBoundingRect 获取组在场景中的实际边界
+        # 使用组的 rect() 获取当前边界（因为 pos() 可能有偏移，用 sceneBoundingRect 更准确）
         group_rect = group_item.sceneBoundingRect()
         
+        # 第1步：检查现有成员是否仍在组框内，不在则移除 / Step 1: Remove members outside group bounds
+        members_to_remove = []
+        for item in self.scene.items():
+            if not isinstance(item, RefItem):
+                continue
+            if not (hasattr(item, 'group_id') and item.group_id == group_item.group_id):
+                continue
+            # 使用图片中心点判定是否在组框内 / Use image center to check if inside group bounds
+            item_center = item.sceneBoundingRect().center()
+            if not group_rect.contains(item_center):
+                members_to_remove.append(item)
+        
+        for item in members_to_remove:
+            item.group_id = None
+            group_item.remove_member(item)
+        
+        # 如果移除后成员不足2个，自动解散 / Auto ungroup if less than 2 members
+        remaining_members = [i for i in self.scene.items() 
+                            if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == group_item.group_id]
+        if len(remaining_members) < 2:
+            self.ungroup(group_item)
+            self.view.viewport().update()
+            return
+        
+        # 第2步：检查框内的新图片并拉入组 / Step 2: Pull new images inside group bounds
         for item in self.scene.items():
             if not isinstance(item, RefItem):
                 continue
@@ -949,7 +984,7 @@ class MainWindow(QMainWindow):
                 continue
             
             # 获取图片的中心点 / Get image center point
-            item_center = item.scenePos()
+            item_center = item.sceneBoundingRect().center()
             
             # 如果图片中心在组边界内，则将其加入组 / If image center is inside group bounds, add it to group
             if group_rect.contains(item_center):
@@ -987,11 +1022,12 @@ class MainWindow(QMainWindow):
         # 使用 sceneBoundingRect 获取组在场景中的实际边界
         group_rect = group_item.sceneBoundingRect()
         
-        # 获取图片的边界矩形 / Get image bounding rect
-        item_rect = item.sceneBoundingRect()
+        # 使用图片中心点判定是否在组内（与 check_images_in_group_bounds 保持一致）
+        # Use image center point to check (consistent with check_images_in_group_bounds)
+        item_center = item.sceneBoundingRect().center()
         
-        # 如果图片边界与组边界完全不相交，则移出组 / If image bounds don't intersect with group bounds at all, remove from group
-        if not group_rect.intersects(item_rect):
+        # 如果图片中心不在组边界内，则移出组 / If image center is outside group bounds, remove from group
+        if not group_rect.contains(item_center):
             # 从组中移除图片 / Remove image from group
             item.group_id = None
             group_item.remove_member(item)

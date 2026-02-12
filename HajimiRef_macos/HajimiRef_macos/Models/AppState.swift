@@ -841,49 +841,224 @@ class AppState {
     func smartSortSelected() {
         guard !selectedImageIds.isEmpty else { return }
         
-        // 1. 获取选中的图片实体
-        let selectedImages = images.filter { selectedImageIds.contains($0.id) }
-        guard !selectedImages.isEmpty else { return }
+        // 1. 获取选中的图片实体及其索引
+        let selectedIndices = images.indices.filter { selectedImageIds.contains(images[$0].id) }
+        guard !selectedIndices.isEmpty else { return }
         
-        // 2. 计算边界框以确定起始位置
-        let minX = selectedImages.map { $0.x }.min() ?? 0
-        let minY = selectedImages.map { $0.y }.min() ?? 0
+        let n = selectedIndices.count
         
-        // 3. 简单的流式布局 (Flow Layout)
-        // 我们尝试将图片排列成一个近似的正方形网格。
-        let count = CGFloat(selectedImages.count)
-        let columns = ceil(sqrt(count))
+        // 2. 构建物理刚体数据 / Build physics body data
+        struct Body {
+            var index: Int      // 在 images 数组中的索引
+            var x: CGFloat      // 中心 x
+            var y: CGFloat      // 中心 y
+            var w: CGFloat      // 宽
+            var h: CGFloat      // 高
+            var vx: CGFloat = 0 // 速度 x
+            var vy: CGFloat = 0 // 速度 y
+        }
         
-        var currentX: CGFloat = minX
-        var currentY: CGFloat = minY
-        var maxHeightInRow: CGFloat = 0
-        var columnIndex: CGFloat = 0
+        var bodies: [Body] = selectedIndices.map { idx in
+            let img = images[idx]
+            let w = (img.nsImage?.size.width ?? 100) * img.scale
+            let h = (img.nsImage?.size.height ?? 100) * img.scale
+            return Body(index: idx, x: img.x, y: img.y, w: w, h: h)
+        }
         
-        // 4. 应用布局
-        // 我们需要更新原始数组中的位置
-        for image in selectedImages {
-            if let index = images.firstIndex(where: { $0.id == image.id }) {
-                let img = images[index]
-                let width = (img.nsImage?.size.width ?? 100) * img.scale
-                let height = (img.nsImage?.size.height ?? 100) * img.scale
-                
-                // 移动图片
-                // 注意：我们的坐标系是中心点，所以需要加上半宽/半高
-                images[index].x = currentX + width / 2
-                images[index].y = currentY + height / 2
-                
-                // 更新游标
-                currentX += width + 20 // 20px 间距
-                maxHeightInRow = max(maxHeightInRow, height)
-                columnIndex += 1
-                
-                // 换行
-                if columnIndex >= columns {
-                    currentX = minX
-                    currentY += maxHeightInRow + 20 // 20px 间距
-                    maxHeightInRow = 0
-                    columnIndex = 0
+        // 3. 记录原始质心用于偏移校正 / Record original centroid for offset correction
+        let origCenterX = bodies.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(n)
+        let origCenterY = bodies.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(n)
+        
+        // 4. 物理模拟参数 / Physics simulation parameters
+        // ─────────────────────────────────────────────────────────────────────
+        // spacing: 图片之间的最小期望间距（pt），值越大图片排列越稀疏
+        // Minimum desired gap (pt) between images. Larger = more spread out.
+        let spacing: CGFloat = 12.0
+        
+        // repulsionStrength: 斥力强度系数，控制重叠图片被推开的速度
+        //   值范围建议 0.5~2.0，越大越快消除重叠，但过大可能导致抖动
+        //   相比向心引力需要足够大以确保斥力占主导，避免收敛时残留重叠
+        // Repulsion coefficient. Recommended range: 0.5~2.0. Must dominate over attraction.
+        let repulsionStrength: CGFloat = 1.2
+        
+        // attractionStrength: 向心引力系数，将所有图片拉向共同质心以保持紧凑
+        //   值范围建议 0.005~0.05，越大布局越紧凑，过大会与斥力冲突导致振荡
+        //   必须远小于 repulsionStrength，否则会在收敛阶段将图片拉回重叠状态
+        // Attraction coefficient. Recommended range: 0.005~0.05. Must be much smaller than repulsion.
+        let attractionStrength: CGFloat = 0.01
+        
+        // damping: 速度阻尼系数（0~1），每帧速度乘以此值
+        //   越接近 1 收敛越慢但更平滑，越接近 0 收敛越快但可能突变
+        //   建议 0.75~0.90，过高会导致斥力产生的位移被快速吃掉从而推不开
+        // Velocity damping (0~1). Recommended: 0.75~0.90. Too high dampens repulsion displacement.
+        let damping: CGFloat = 0.80
+        
+        // maxIterations: 最大模拟迭代次数，防止极端情况下无限循环
+        //   通常 80~200 足够收敛，图片数量越多可能需要更多迭代
+        // Max simulation iterations. Usually 80~200 suffices. More images may need more.
+        let maxIterations = 150
+        
+        // convergenceThreshold: 收敛速度阈值，当所有物体最大速度低于此值时提前终止
+        //   值越小结果越精确，但耗时越长。建议 0.1~0.5
+        // Convergence threshold. Smaller = more precise but longer computation. Recommended: 0.1~0.5.
+        let convergenceThreshold: CGFloat = 0.1
+        
+        // maxForce: 单步最大力限制，防止极端重叠导致图片弹射过远
+        // Max force per step. Safety cap to prevent catapulting from extreme overlap.
+        let maxForce: CGFloat = 300.0
+        
+        // 5. 迭代物理模拟 / Iterative physics simulation
+        for _ in 0..<maxIterations {
+            // 计算质心 / Calculate centroid
+            let cx = bodies.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(n)
+            let cy = bodies.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(n)
+            
+            // 初始化力 / Initialize forces
+            var forces = Array(repeating: (fx: CGFloat(0), fy: CGFloat(0)), count: n)
+            
+            // 检测是否还有重叠，用于后半段关闭引力 / Track if any overlap remains
+            var hasOverlap = false
+            
+            // 5a) 斥力：防止重叠 / Repulsion: prevent overlap
+            for i in 0..<n {
+                for j in (i + 1)..<n {
+                    let a = bodies[i]
+                    let b = bodies[j]
+                    
+                    let halfWA = a.w / 2.0 + spacing / 2.0
+                    let halfHA = a.h / 2.0 + spacing / 2.0
+                    let halfWB = b.w / 2.0 + spacing / 2.0
+                    let halfHB = b.h / 2.0 + spacing / 2.0
+                    
+                    let dx = b.x - a.x
+                    let dy = b.y - a.y
+                    
+                    let overlapX = (halfWA + halfWB) - abs(dx)
+                    let overlapY = (halfHA + halfHB) - abs(dy)
+                    
+                    if overlapX > 0 && overlapY > 0 {
+                        hasOverlap = true
+                        if overlapX < overlapY {
+                            // 沿 X 轴推开
+                            let force = min(overlapX * repulsionStrength, maxForce)
+                            if dx >= 0 {
+                                forces[i].fx -= force
+                                forces[j].fx += force
+                            } else {
+                                forces[i].fx += force
+                                forces[j].fx -= force
+                            }
+                        } else {
+                            // 沿 Y 轴推开
+                            let force = min(overlapY * repulsionStrength, maxForce)
+                            if dy >= 0 {
+                                forces[i].fy -= force
+                                forces[j].fy += force
+                            } else {
+                                forces[i].fy += force
+                                forces[j].fy -= force
+                            }
+                        }
+                    }
                 }
+            }
+            
+            // 5b) 向心引力（仅在无重叠时施加，避免把已分离的图片拉回重叠）
+            // Attraction toward centroid (only when no overlap, to avoid pulling separated images back)
+            if !hasOverlap {
+                for i in 0..<n {
+                    forces[i].fx += (cx - bodies[i].x) * attractionStrength
+                    forces[i].fy += (cy - bodies[i].y) * attractionStrength
+                }
+            }
+            
+            // 5c) 更新速度和位置 / Update velocity and position
+            var maxVel: CGFloat = 0
+            for i in 0..<n {
+                bodies[i].vx = (bodies[i].vx + forces[i].fx) * damping
+                bodies[i].vy = (bodies[i].vy + forces[i].fy) * damping
+                bodies[i].x += bodies[i].vx
+                bodies[i].y += bodies[i].vy
+                
+                let vel = sqrt(bodies[i].vx * bodies[i].vx + bodies[i].vy * bodies[i].vy)
+                if vel > maxVel { maxVel = vel }
+            }
+            
+            // 5d) 检查收敛（必须同时无重叠且速度低于阈值才终止）
+            // Converge only when no overlap AND velocity is below threshold
+            if maxVel < convergenceThreshold && !hasOverlap {
+                break
+            }
+        }
+        
+        // 5e) 强制去重叠后处理：模拟结束后逐对检查，直接位移消除残留重叠
+        //      确保 100% 无重叠，作为物理模拟的最终安全网
+        // Post-processing: forcefully resolve any remaining overlaps after simulation.
+        for _ in 0..<50 {
+            var anyOverlap = false
+            for i in 0..<n {
+                for j in (i + 1)..<n {
+                    let halfWA = bodies[i].w / 2.0 + spacing / 2.0
+                    let halfHA = bodies[i].h / 2.0 + spacing / 2.0
+                    let halfWB = bodies[j].w / 2.0 + spacing / 2.0
+                    let halfHB = bodies[j].h / 2.0 + spacing / 2.0
+                    
+                    let dx = bodies[j].x - bodies[i].x
+                    let dy = bodies[j].y - bodies[i].y
+                    
+                    let overlapX = (halfWA + halfWB) - abs(dx)
+                    let overlapY = (halfHA + halfHB) - abs(dy)
+                    
+                    if overlapX > 0 && overlapY > 0 {
+                        anyOverlap = true
+                        // 沿最小重叠轴直接位移一半距离 / Displace each body by half the overlap along min axis
+                        if overlapX < overlapY {
+                            let shift = overlapX / 2.0 + 0.5  // +0.5 确保完全分离
+                            if dx >= 0 {
+                                bodies[i].x -= shift
+                                bodies[j].x += shift
+                            } else {
+                                bodies[i].x += shift
+                                bodies[j].x -= shift
+                            }
+                        } else {
+                            let shift = overlapY / 2.0 + 0.5
+                            if dy >= 0 {
+                                bodies[i].y -= shift
+                                bodies[j].y += shift
+                            } else {
+                                bodies[i].y += shift
+                                bodies[j].y -= shift
+                            }
+                        }
+                    }
+                }
+            }
+            if !anyOverlap { break }
+        }
+        
+        // 6. 偏移校正：对齐到原始质心 / Offset correction: align to original centroid
+        let newCX = bodies.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(n)
+        let newCY = bodies.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(n)
+        let offsetX = origCenterX - newCX
+        let offsetY = origCenterY - newCY
+        
+        // 7. 应用最终位置 / Apply final positions
+        for body in bodies {
+            images[body.index].x = body.x + offsetX
+            images[body.index].y = body.y + offsetY
+        }
+        
+        // 8. 整理后更新相关组的边界 / Update related group bounds after organizing
+        var affectedGroupIds = Set<UUID>()
+        for body in bodies {
+            if let gid = images[body.index].groupId {
+                affectedGroupIds.insert(gid)
+            }
+        }
+        for gid in affectedGroupIds {
+            if let gi = groups.firstIndex(where: { $0.id == gid }) {
+                updateGroupBounds(group: &groups[gi])
             }
         }
     }

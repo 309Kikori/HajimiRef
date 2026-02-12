@@ -3,7 +3,6 @@ import os
 import json
 import base64
 import math
-from rectpack import newPacker
 from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter, QColor
@@ -235,75 +234,239 @@ class MainWindow(QMainWindow):
 
     def organize_items(self, items):
         """
-        使用 rectpack 进行紧凑的无重叠放置。
-        - items: list of QGraphicsItems (RefItem)
-        算法步骤：
-        1) 快照每个项的 sceneBoundingRect 大小并向上取整为整数。
-        2) 使用 rectpack 计算紧凑布局（无需手写网格逻辑）。
-        3) 将 rectpack 返回的坐标转换为场景坐标并应用到每个 item。
-        此实现尽量保留原始选区的左上角作为偏移基准。
+        使用物理模拟布局算法进行紧凑的无重叠放置。
+        算法思路：将图片视为刚体，通过斥力（防重叠）+ 向心引力（趋向紧凑）+ 阻尼迭代收敛到自然美观的布局。
+        
+        Physics simulation layout algorithm:
+        - Repulsion force: push overlapping images apart
+        - Attraction force: pull images toward centroid for compactness
+        - Damping: ensure convergence
         """
         if not items:
             return
         
-        # 记录原始位置用于撤销 / Record original positions for undo
-        original_positions = [(item, QPointF(item.pos())) for item in items if isinstance(item, RefItem)]
-
-        # 1) 预快照尺寸并建立映射
-        rects = []  # list of (w,h, item, orig_rect)
-        total_area = 0
-        for item in items:
-            r = item.sceneBoundingRect()
-            w = max(1, int(math.ceil(r.width())))
-            h = max(1, int(math.ceil(r.height())))
-            rects.append((w, h, item, r))
-            total_area += w * h
-
-        # 2) 选择一个合理的容器宽度：基于总面积取平方根再放大一些作为容器宽
-        approx_side = int(math.ceil(math.sqrt(total_area)))
-        bin_width = max(approx_side, max(w for w, h, it, r in rects))
-        # 高度给足，防止放不下
-        bin_height = int(math.ceil(total_area / bin_width)) + max(h for w, h, it, r in rects) * 2
-
-        # 3) 使用 rectpack 计算布局
-        # 不指定 mode，使用默认算法，避免 AttributeError
-        packer = newPacker()
-        # 添加一个大箱子（足够装下所有矩形）
-        packer.add_bin(bin_width, bin_height)
-        for w, h, it, r in rects:
-            packer.add_rect(w, h, rid=id(it))
-        packer.pack()
-
-        # 4) 获取包装结果
-        # packer 是可迭代的，包含所有 bin。每个 bin 也是可迭代的，包含所有 rect。
-
-        # 5) 计算原始选区左上角偏移
-        group_rect = QRectF()
-        for _, _, it, r in rects:
-            group_rect = group_rect.united(r)
-        start_x, start_y = group_rect.topLeft().x(), group_rect.topLeft().y()
-
-        # 6) 应用坐标
-        id_map = {id(it): it for _, _, it, r in rects}
+        ref_items = [item for item in items if isinstance(item, RefItem)]
+        if not ref_items:
+            return
         
-        # 遍历所有箱子 (bins)
-        for bin in packer:
-            # 遍历箱子里的所有矩形 (rectangles)
-            for rect in bin:
-                # rect 对象包含 x, y, width, height, rid
-                item = id_map.get(rect.rid)
-                if item is None:
-                    continue
-                
-                target_x = start_x + float(rect.x)
-                target_y = start_y + float(rect.y)
+        # 记录原始位置用于撤销 / Record original positions for undo
+        original_positions = [(item, QPointF(item.pos())) for item in ref_items]
 
-                # 为了将 item 的 sceneBoundingRect.topLeft() 对齐到 (target_x, target_y)，计算 delta
-                cur_rect = item.sceneBoundingRect()
-                cur_tl = cur_rect.topLeft()
-                dx = target_x - cur_tl.x()
-                dy = target_y - cur_tl.y()
-                item.setPos(item.pos() + QPointF(dx, dy))
+        # 1) 快照每个 item 的尺寸和位置信息 / Snapshot size and position info
+        bodies = []  # list of dict: {item, x, y, w, h, vx, vy}
+        for item in ref_items:
+            r = item.sceneBoundingRect()
+            bodies.append({
+                'item': item,
+                'x': r.center().x(),       # 中心点坐标
+                'y': r.center().y(),
+                'w': r.width(),
+                'h': r.height(),
+                'vx': 0.0,
+                'vy': 0.0,
+            })
+        
+        n = len(bodies)
+        if n == 0:
+            return
+        
+        # 2) 物理模拟参数 / Physics simulation parameters
+        # ─────────────────────────────────────────────────────────────────────
+        # spacing: 图片之间的最小期望间距（像素），值越大图片排列越稀疏
+        # Minimum desired gap (px) between images. Larger = more spread out.
+        spacing = 12.0
+        
+        # repulsion_strength: 斥力强度系数，控制重叠图片被推开的速度
+        #   值范围建议 0.5~2.0，越大越快消除重叠，但过大可能导致抖动
+        #   相比向心引力需要足够大以确保斥力占主导，避免收敛时残留重叠
+        # Repulsion coefficient. Controls how fast overlapping images are pushed apart.
+        # Recommended range: 0.5~2.0. Must dominate over attraction to prevent residual overlap.
+        repulsion_strength = 1.2
+        
+        # attraction_strength: 向心引力系数，将所有图片拉向共同质心以保持紧凑
+        #   值范围建议 0.005~0.05，越大布局越紧凑，过大会与斥力冲突导致振荡
+        #   必须远小于 repulsion_strength，否则会在收敛阶段将图片拉回重叠状态
+        # Attraction coefficient. Pulls all images toward their centroid for compactness.
+        # Recommended range: 0.005~0.05. Must be much smaller than repulsion to avoid re-overlap.
+        attraction_strength = 0.01
+        
+        # damping: 速度阻尼系数（0~1），每帧速度乘以此值
+        #   越接近 1 收敛越慢但更平滑，越接近 0 收敛越快但可能突变
+        #   建议 0.75~0.90，过高会导致斥力产生的位移被快速吃掉从而推不开
+        # Velocity damping factor (0~1). Each frame velocity is multiplied by this value.
+        # Recommended: 0.75~0.90. Too high dampens repulsion displacement, preventing separation.
+        damping = 0.80
+        
+        # max_iterations: 最大模拟迭代次数，防止极端情况下无限循环
+        #   通常 80~200 足够收敛，图片数量越多可能需要更多迭代
+        # Maximum simulation iterations. Prevents infinite loops in edge cases.
+        # Usually 80~200 is sufficient. More images may need more iterations.
+        max_iterations = 150
+        
+        # convergence_threshold: 收敛速度阈值，当所有物体最大速度低于此值时提前终止
+        #   值越小结果越精确，但耗时越长。建议 0.1~0.5
+        # Convergence speed threshold. Simulation stops early when max velocity drops below this.
+        # Smaller = more precise result but longer computation. Recommended: 0.1~0.5.
+        convergence_threshold = 0.1
+        
+        # max_force: 单步最大力限制，防止极端重叠导致图片弹射过远
+        #   作为安全阀，一般不需要调整
+        # Maximum force per step. Safety cap to prevent extreme overlap from catapulting images.
+        # Generally no need to adjust.
+        max_force = 300.0
+        
+        # 3) 迭代物理模拟 / Iterative physics simulation
+        for iteration in range(max_iterations):
+            # 计算质心 / Calculate centroid
+            cx = sum(b['x'] for b in bodies) / n
+            cy = sum(b['y'] for b in bodies) / n
+            
+            # 初始化力 / Initialize forces
+            forces = [{'fx': 0.0, 'fy': 0.0} for _ in range(n)]
+            
+            # 检测是否还有重叠，用于后半段关闭引力 / Track if any overlap remains
+            has_overlap = False
+            
+            # 3a) 斥力：防止重叠 / Repulsion: prevent overlap
+            for i in range(n):
+                for j in range(i + 1, n):
+                    a = bodies[i]
+                    b = bodies[j]
+                    
+                    # 计算两个矩形之间的 AABB 重叠（含间距）/ Calculate AABB overlap (including spacing)
+                    half_w_a = a['w'] / 2.0 + spacing / 2.0
+                    half_h_a = a['h'] / 2.0 + spacing / 2.0
+                    half_w_b = b['w'] / 2.0 + spacing / 2.0
+                    half_h_b = b['h'] / 2.0 + spacing / 2.0
+                    
+                    dx = b['x'] - a['x']
+                    dy = b['y'] - a['y']
+                    
+                    overlap_x = (half_w_a + half_w_b) - abs(dx)
+                    overlap_y = (half_h_a + half_h_b) - abs(dy)
+                    
+                    if overlap_x > 0 and overlap_y > 0:
+                        has_overlap = True
+                        # 存在重叠，沿最小重叠方向推开 / Overlap exists, push along minimum overlap axis
+                        if overlap_x < overlap_y:
+                            # 沿 X 轴推开 / Push along X axis
+                            force = overlap_x * repulsion_strength
+                            force = min(force, max_force)
+                            if dx >= 0:
+                                forces[i]['fx'] -= force
+                                forces[j]['fx'] += force
+                            else:
+                                forces[i]['fx'] += force
+                                forces[j]['fx'] -= force
+                        else:
+                            # 沿 Y 轴推开 / Push along Y axis
+                            force = overlap_y * repulsion_strength
+                            force = min(force, max_force)
+                            if dy >= 0:
+                                forces[i]['fy'] -= force
+                                forces[j]['fy'] += force
+                            else:
+                                forces[i]['fy'] += force
+                                forces[j]['fy'] -= force
+            
+            # 3b) 向心引力：保持紧凑（仅在无重叠时施加，避免把已分离的图片拉回重叠）
+            # Attraction: keep compact (only when no overlap, to avoid pulling separated images back)
+            if not has_overlap:
+                for i in range(n):
+                    dx_to_center = cx - bodies[i]['x']
+                    dy_to_center = cy - bodies[i]['y']
+                    forces[i]['fx'] += dx_to_center * attraction_strength
+                    forces[i]['fy'] += dy_to_center * attraction_strength
+            
+            # 3c) 更新速度和位置 / Update velocity and position
+            max_vel = 0.0
+            for i in range(n):
+                bodies[i]['vx'] = (bodies[i]['vx'] + forces[i]['fx']) * damping
+                bodies[i]['vy'] = (bodies[i]['vy'] + forces[i]['fy']) * damping
+                bodies[i]['x'] += bodies[i]['vx']
+                bodies[i]['y'] += bodies[i]['vy']
+                
+                vel = math.sqrt(bodies[i]['vx'] ** 2 + bodies[i]['vy'] ** 2)
+                if vel > max_vel:
+                    max_vel = vel
+            
+            # 3d) 检查收敛（必须同时无重叠且速度低于阈值才终止）
+            # Converge only when no overlap AND velocity is below threshold
+            if max_vel < convergence_threshold and not has_overlap:
+                break
+        
+        # 3e) 强制去重叠后处理：模拟结束后逐对检查，直接位移消除残留重叠
+        #      确保 100% 无重叠，作为物理模拟的最终安全网
+        # Post-processing: forcefully resolve any remaining overlaps after simulation.
+        # Iteratively push apart overlapping pairs by direct displacement (no velocity).
+        # This is the final safety net ensuring zero overlap.
+        for _pass in range(50):  # 最多 50 轮强制去重叠 / Up to 50 passes
+            any_overlap = False
+            for i in range(n):
+                for j in range(i + 1, n):
+                    a = bodies[i]
+                    b = bodies[j]
+                    
+                    half_w_a = a['w'] / 2.0 + spacing / 2.0
+                    half_h_a = a['h'] / 2.0 + spacing / 2.0
+                    half_w_b = b['w'] / 2.0 + spacing / 2.0
+                    half_h_b = b['h'] / 2.0 + spacing / 2.0
+                    
+                    dx = b['x'] - a['x']
+                    dy = b['y'] - a['y']
+                    
+                    overlap_x = (half_w_a + half_w_b) - abs(dx)
+                    overlap_y = (half_h_a + half_h_b) - abs(dy)
+                    
+                    if overlap_x > 0 and overlap_y > 0:
+                        any_overlap = True
+                        # 沿最小重叠轴直接位移一半距离 / Displace each body by half the overlap along min axis
+                        if overlap_x < overlap_y:
+                            shift = overlap_x / 2.0 + 0.5  # +0.5 确保完全分离 / +0.5 ensures full separation
+                            if dx >= 0:
+                                bodies[i]['x'] -= shift
+                                bodies[j]['x'] += shift
+                            else:
+                                bodies[i]['x'] += shift
+                                bodies[j]['x'] -= shift
+                        else:
+                            shift = overlap_y / 2.0 + 0.5
+                            if dy >= 0:
+                                bodies[i]['y'] -= shift
+                                bodies[j]['y'] += shift
+                            else:
+                                bodies[i]['y'] += shift
+                                bodies[j]['y'] -= shift
+            if not any_overlap:
+                break
+        
+        # 4) 计算偏移，锚定到原始选区的左上角 / Calculate offset, anchor to original selection top-left
+        orig_group_rect = QRectF()
+        for item in ref_items:
+            orig_group_rect = orig_group_rect.united(item.sceneBoundingRect())
+        orig_center_x = orig_group_rect.center().x()
+        orig_center_y = orig_group_rect.center().y()
+        
+        # 新布局质心 / New layout centroid
+        new_cx = sum(b['x'] for b in bodies) / n
+        new_cy = sum(b['y'] for b in bodies) / n
+        
+        # 偏移：让新布局的质心对齐到原始质心 / Offset to align new centroid to original centroid
+        offset_x = orig_center_x - new_cx
+        offset_y = orig_center_y - new_cy
+        
+        # 5) 应用最终位置 / Apply final positions
+        for body in bodies:
+            item = body['item']
+            final_cx = body['x'] + offset_x
+            final_cy = body['y'] + offset_y
+            
+            # 将中心点坐标转换为 item 的 pos / Convert center coords to item pos
+            cur_rect = item.sceneBoundingRect()
+            cur_center = cur_rect.center()
+            dx = final_cx - cur_center.x()
+            dy = final_cy - cur_center.y()
+            item.setPos(item.pos() + QPointF(dx, dy))
         
         # 记录整理操作到撤销历史 / Record organize action to undo history
         items_positions = []
@@ -317,8 +480,8 @@ class MainWindow(QMainWindow):
         
         # 整理后更新相关组的边界，避免图片溢出组框 / Update related group bounds after organizing to prevent overflow
         affected_group_ids = set()
-        for item in items:
-            if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id is not None:
+        for item in ref_items:
+            if hasattr(item, 'group_id') and item.group_id is not None:
                 affected_group_ids.add(item.group_id)
         for gid in affected_group_ids:
             if gid in self.groups:

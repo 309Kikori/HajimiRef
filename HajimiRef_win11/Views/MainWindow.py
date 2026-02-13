@@ -566,6 +566,39 @@ class MainWindow(QMainWindow):
             if hasattr(item, 'group_id') and item.group_id is not None:
                 affected_group_ids.add(item.group_id)
         
+        # 预计算受影响组的起始 rect 和目标 rect，用于同步动画插值
+        # Pre-calculate start/target rects for affected groups, for synchronized animation interpolation
+        group_anim_data = {}  # {group_id: {'group': GroupItem, 'start_rect': QRectF, 'target_rect': QRectF}}
+        padding = 20  # 与 GroupItem.update_bounds 中的 padding 一致
+        for gid in affected_group_ids:
+            if gid not in self.groups:
+                continue
+            group_item = self.groups[gid]
+            # 起始 rect = 组当前的 rect / Start rect = group's current rect
+            start_rect = QRectF(group_item.rect())
+            
+            # 计算目标 rect：基于组成员的目标位置 / Calculate target rect based on members' target positions
+            target_union = QRectF()
+            for ad in anim_data:
+                item = ad['item']
+                if hasattr(item, 'group_id') and item.group_id == gid:
+                    # 计算该图片到达目标位置后的场景矩形
+                    # Calculate the scene rect of this image at its target position
+                    cur_rect = item.sceneBoundingRect()
+                    # 目标位置偏移 = target_pos - current_pos
+                    dx = ad['target'].x() - item.pos().x()
+                    dy = ad['target'].y() - item.pos().y()
+                    target_item_rect = QRectF(cur_rect.x() + dx, cur_rect.y() + dy, cur_rect.width(), cur_rect.height())
+                    target_union = target_union.united(target_item_rect)
+            
+            if not target_union.isEmpty():
+                target_union.adjust(-padding, -padding, padding, padding)
+                group_anim_data[gid] = {
+                    'group': group_item,
+                    'start_rect': start_rect,
+                    'target_rect': target_union,
+                }
+        
         # 使用闭包捕获动画状态 / Use closure to capture animation state
         frame_counter = [0]
         
@@ -581,10 +614,24 @@ class MainWindow(QMainWindow):
             
             progress = ease_out_cubic(t)
             
+            # 插值图片位置 / Interpolate image positions
             for ad in anim_data:
                 current_x = ad['start'].x() + (ad['target'].x() - ad['start'].x()) * progress
                 current_y = ad['start'].y() + (ad['target'].y() - ad['start'].y()) * progress
                 ad['item'].setPos(current_x, current_y)
+            
+            # 同步插值组边界（与图片动画完全同步，实现优雅的过渡效果）
+            # Synchronously interpolate group bounds (perfectly synced with image animation for elegant transition)
+            for gid, gdata in group_anim_data.items():
+                s = gdata['start_rect']
+                e = gdata['target_rect']
+                interp_rect = QRectF(
+                    s.x() + (e.x() - s.x()) * progress,
+                    s.y() + (e.y() - s.y()) * progress,
+                    s.width() + (e.width() - s.width()) * progress,
+                    s.height() + (e.height() - s.height()) * progress,
+                )
+                gdata['group'].setRect(interp_rect)
             
             self.view.viewport().update()
             
@@ -593,7 +640,8 @@ class MainWindow(QMainWindow):
                 self._organize_anim_timer.stop()
                 self._organize_anim_timer = None
                 
-                # 动画结束后更新组边界 / Update group bounds after animation
+                # 动画结束后精确更新组边界（修正插值累积误差）
+                # Final precise update after animation (correct interpolation accumulated errors)
                 for gid in affected_group_ids:
                     if gid in self.groups:
                         self.update_group_bounds(self.groups[gid])
@@ -963,7 +1011,8 @@ class MainWindow(QMainWindow):
                 self.scene.addItem(group_item)
                 self.groups[group_item.group_id] = group_item
             
-            # 更新所有组的边界 / Update all group bounds
+            # 更新所有组的边界（几何交集会自动判定成员，无需显式维护 member_ids）
+            # Update all group bounds (geometric intersection auto-determines members, no member_ids needed)
             for group_item in self.groups.values():
                 self.update_group_bounds(group_item)
             
@@ -1133,13 +1182,12 @@ class MainWindow(QMainWindow):
         self.scene.addItem(group_item)
         self.groups[group_item.group_id] = group_item
         
-        # 将选中的图片添加到组 / Add selected images to group
+        # 为选中的图片设置 group_id 标记 / Set group_id tag for selected images
         for item in selected_items:
             item.group_id = group_item.group_id
-            group_item.add_member(item)
         
-        # 更新组边界 / Update group bounds
-        self.update_group_bounds(group_item)
+        # 更新组边界（基于几何位置自动判定成员）/ Update group bounds (members auto-determined by geometry)
+        group_item.update_bounds(selected_items)
         
         # 记录撤销 / Record undo
         self.undo_manager.push(GroupCommand(self.scene, group_item, selected_items, self.groups))
@@ -1148,14 +1196,12 @@ class MainWindow(QMainWindow):
     
     def _get_group_members(self, group_item):
         """
-        通过 member_ids 精确获取组的成员列表（单一权威来源）
-        Get group members precisely via member_ids (single source of truth)
+        通过几何交集实时判定组成员（位置就是真相）
+        图片与组框的交集面积 >= 图片面积 * 5% 即为成员
+        Determine group members by geometric intersection in real-time (position is truth).
+        An image is a member if intersection_area >= image_area * 5%.
         """
-        members = []
-        for item in self.scene.items():
-            if isinstance(item, RefItem) and id(item) in group_item.member_ids:
-                members.append(item)
-        return members
+        return group_item.get_members_by_intersection(threshold=0.05)
     
     def update_group_bounds(self, group_item):
         """
@@ -1235,65 +1281,47 @@ class MainWindow(QMainWindow):
     def check_images_in_group_bounds(self, group_item):
         """
         检测组边界调整后的成员变化 / Check member changes after group bounds resize
-        1. 将框内的新图片拉入组
-        2. 将不再在框内的现有成员移出组
+        1. 通过几何交集自动拉入框内图片
+        2. 自动移出不再在框内的图片
         """
-        # 使用组的 rect() 获取当前边界（因为 pos() 可能有偏移，用 sceneBoundingRect 更准确）
-        group_rect = group_item.sceneBoundingRect()
+        # 使用几何交集实时判定当前成员（位置就是真相）
+        # Determine current members by geometric intersection (position is truth)
+        current_members = self._get_group_members(group_item)
         
-        # 第1步：检查现有成员是否仍在组框内，不在则移除 / Step 1: Remove members outside group bounds
-        members_to_remove = []
-        for item in self._get_group_members(group_item):
-            # 使用图片中心点判定是否在组框内 / Use image center to check if inside group bounds
-            item_center = item.sceneBoundingRect().center()
-            if not group_rect.contains(item_center):
-                members_to_remove.append(item)
+        # 更新成员的 group_id 标记 / Update group_id tags for members
+        # 先清除所有旧标记 / Clear old tags first
+        for item in self.scene.items():
+            if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id:
+                if item not in current_members:
+                    item.group_id = None
         
-        for item in members_to_remove:
-            item.group_id = None
-            group_item.remove_member(item)
+        # 为新成员设置 group_id / Set group_id for new members
+        for item in current_members:
+            # 如果图片之前在其他组中，先从那个组移除 / If image was in another group, remove from that group first
+            if hasattr(item, 'group_id') and item.group_id is not None and item.group_id != group_item.group_id:
+                old_group_id = item.group_id
+                if old_group_id in self.groups:
+                    old_group = self.groups[old_group_id]
+                    item.group_id = None  # 先清除，避免循环
+                    # 检查旧组是否还有足够成员 / Check if old group still has enough members
+                    old_remaining = old_group.get_members_by_intersection()
+                    if len(old_remaining) < 2:
+                        self.ungroup(old_group)
+            item.group_id = group_item.group_id
         
-        # 如果移除后成员不足2个，自动解散 / Auto ungroup if less than 2 members
-        remaining_members = self._get_group_members(group_item)
-        if len(remaining_members) < 2:
+        # 如果成员不足2个，自动解散 / Auto ungroup if less than 2 members
+        if len(current_members) < 2:
             self.ungroup(group_item)
             self.view.viewport().update()
             return
-        
-        # 第2步：检查框内的新图片并拉入组 / Step 2: Pull new images inside group bounds
-        for item in self.scene.items():
-            if not isinstance(item, RefItem):
-                continue
-            
-            # 跳过已经在此组中的图片 / Skip images already in this group
-            if id(item) in group_item.member_ids:
-                continue
-            
-            # 获取图片的中心点 / Get image center point
-            item_center = item.sceneBoundingRect().center()
-            
-            # 如果图片中心在组边界内，则将其加入组 / If image center is inside group bounds, add it to group
-            if group_rect.contains(item_center):
-                # 如果图片之前在其他组中，先从那个组移除 / If image was in another group, remove from that group first
-                if hasattr(item, 'group_id') and item.group_id is not None:
-                    old_group_id = item.group_id
-                    if old_group_id in self.groups:
-                        old_group = self.groups[old_group_id]
-                        old_group.remove_member(item)
-                        # 如果旧组只剩一个或零个成员，自动解散 / Auto ungroup if old group has 1 or 0 members left
-                        if len(old_group.member_ids) < 2:
-                            self.ungroup(old_group)
-                
-                # 将图片加入新组 / Add image to new group
-                item.group_id = group_item.group_id
-                group_item.add_member(item)
         
         self.view.viewport().update()
     
     def check_image_out_of_group(self, item):
         """
-        检测图片是否完全移出了组边界 / Check if image is completely outside group bounds
-        如果是，则自动将其从组中移除
+        检测图片移动后是否离开了组（基于几何交集实时判定）
+        Check if image has left its group after moving (real-time geometric intersection).
+        如果交集面积 < 图片面积 * 5%，则认为图片已离开组
         """
         if not hasattr(item, 'group_id') or item.group_id is None:
             return
@@ -1303,21 +1331,26 @@ class MainWindow(QMainWindow):
             return
         
         group_item = self.groups[group_id]
-        # 使用 sceneBoundingRect 获取组在场景中的实际边界
         group_rect = group_item.sceneBoundingRect()
+        item_rect = item.sceneBoundingRect()
         
-        # 使用图片中心点判定是否在组内（与 check_images_in_group_bounds 保持一致）
-        # Use image center point to check (consistent with check_images_in_group_bounds)
-        item_center = item.sceneBoundingRect().center()
+        # 计算交集面积占比 / Calculate intersection area ratio
+        intersection = group_rect.intersected(item_rect)
+        item_area = item_rect.width() * item_rect.height()
         
-        # 如果图片中心不在组边界内，则移出组 / If image center is outside group bounds, remove from group
-        if not group_rect.contains(item_center):
-            # 从组中移除图片 / Remove image from group
+        is_outside = True
+        if item_area > 1e-6 and not intersection.isEmpty():
+            intersection_area = intersection.width() * intersection.height()
+            if intersection_area / item_area >= 0.05:  # 5% 阈值 / 5% threshold
+                is_outside = False
+        
+        if is_outside:
+            # 图片已离开组 / Image has left the group
             item.group_id = None
-            group_item.remove_member(item)
             
-            # 如果组只剩一个或零个成员，自动解散 / Auto ungroup if group has 1 or 0 members left
-            if len(group_item.member_ids) < 2:
+            # 如果组剩余成员不足2个，自动解散 / Auto ungroup if less than 2 remaining members
+            remaining = group_item.get_members_by_intersection()
+            if len(remaining) < 2:
                 self.ungroup(group_item)
             
             self.view.viewport().update()

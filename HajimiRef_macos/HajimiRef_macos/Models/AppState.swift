@@ -1099,25 +1099,28 @@ class AppState {
         let offsetX = origCenterX - newCX
         let offsetY = origCenterY - newCY
         
-        // 8. 使用弹性动画过渡应用最终位置 / Apply final positions with spring animation transition
+        // 8. 使用弹性动画过渡应用最终位置（图片 + 组边界同步动画）
+        //    Apply final positions with spring animation transition (images + group bounds synced)
         //    SwiftUI 的 withAnimation(.spring()) 自动利用 Core Animation / Metal 实现流畅的 GPU 加速动画
         //    Leverages SwiftUI's withAnimation(.spring()) for smooth GPU-accelerated animation
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
-            for body in bodies {
-                images[body.index].x = body.x + offsetX
-                images[body.index].y = body.y + offsetY
-            }
-        }
         
-        // 9. 整理后更新相关组的边界 / Update related group bounds after organizing
-        //    延迟更新以等待动画完成 / Delay to wait for animation completion
+        // 9. 收集受影响的组ID / Collect affected group IDs
         var affectedGroupIds = Set<UUID>()
         for body in bodies {
             if let gid = images[body.index].groupId {
                 affectedGroupIds.insert(gid)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [self] in
+        
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
+            // 更新图片位置 / Update image positions
+            for body in bodies {
+                images[body.index].x = body.x + offsetX
+                images[body.index].y = body.y + offsetY
+            }
+            
+            // 同步更新组边界（在同一个动画块中，组大小变化与图片移动完全同步）
+            // Synchronously update group bounds (in the same animation block, group resize syncs perfectly with image movement)
             for gid in affectedGroupIds {
                 if let gi = groups.firstIndex(where: { $0.id == gid }) {
                     updateGroupBounds(group: &groups[gi])

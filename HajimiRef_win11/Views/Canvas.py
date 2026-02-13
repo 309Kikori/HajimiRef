@@ -124,9 +124,6 @@ class GroupItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setZValue(-100)  # 组在图片下方 / Group is below images
         
-        # 成员图片ID列表 / Member image IDs
-        self.member_ids = []
-        
         # 撤销状态 / Undo state
         self._undo_start_pos = None
         self._is_dragging = False
@@ -174,19 +171,47 @@ class GroupItem(QGraphicsRectItem):
             path.addRect(self._name_label_local_rect())
         return path
     
+    def get_members_by_intersection(self, threshold=0.05):
+        """
+        通过几何交集实时判定组成员（位置就是真相）
+        图片与组框的交集面积 >= 图片面积 * threshold 即为成员
+        Determine group members by geometric intersection in real-time (position is truth).
+        An image is a member if intersection_area >= image_area * threshold.
+        
+        参数 / Parameters:
+            threshold: 交集面积占图片面积的最小比例，默认 0.05 (5%)
+                       Minimum ratio of intersection area to image area, default 0.05 (5%)
+        """
+        members = []
+        scene = self.scene()
+        if not scene:
+            return members
+        
+        group_rect = self.sceneBoundingRect()
+        for item in scene.items():
+            if not isinstance(item, RefItem):
+                continue
+            item_rect = item.sceneBoundingRect()
+            intersection = group_rect.intersected(item_rect)
+            if intersection.isEmpty():
+                continue
+            item_area = item_rect.width() * item_rect.height()
+            if item_area < 1e-6:
+                continue
+            intersection_area = intersection.width() * intersection.height()
+            if intersection_area / item_area >= threshold:
+                members.append(item)
+        return members
+    
     def add_member(self, item):
-        """添加成员到组 / Add member to group"""
+        """添加成员到组（仅设置 group_id 标记）/ Add member to group (only set group_id tag)"""
         if hasattr(item, 'group_id'):
             item.group_id = self.group_id
-            if item not in self.member_ids:
-                self.member_ids.append(id(item))
     
     def remove_member(self, item):
-        """从组中移除成员 / Remove member from group"""
+        """从组中移除成员（仅清除 group_id 标记）/ Remove member from group (only clear group_id tag)"""
         if hasattr(item, 'group_id') and item.group_id == self.group_id:
             item.group_id = None
-            if id(item) in self.member_ids:
-                self.member_ids.remove(id(item))
     
     def update_bounds(self, items):
         """根据成员项目更新组边界 / Update group bounds based on member items"""
@@ -197,7 +222,7 @@ class GroupItem(QGraphicsRectItem):
         padding = 20
         union_rect = QRectF()
         for item in items:
-            if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
+            if isinstance(item, RefItem):
                 union_rect = union_rect.united(item.sceneBoundingRect())
         
         if not union_rect.isEmpty():
@@ -323,18 +348,11 @@ class GroupItem(QGraphicsRectItem):
             self._undo_start_pos = QPointF(self.pos())  # 使用 pos() 而不是 rect().topLeft()
             self._drag_start_rect_pos = QPointF(self.rect().topLeft())  # 保存 rect 的初始位置
             
-            # 通过 member_ids 精确查找成员并记录起始位置（避免遍历全场景）
-            # Use member_ids to precisely find members and record start positions
-            # (avoids full scene traversal and stale group_id references)
-            self._members_start_pos = {}  # {id(item): QPointF(start_pos)}
-            self._members_refs = {}       # {id(item): item} 缓存成员引用 / Cache member refs
-            scene = self.scene()
-            if scene:
-                # 先建立 member_ids 到 item 的映射 / Build member_ids -> item mapping
-                for item in scene.items():
-                    if isinstance(item, RefItem) and id(item) in self.member_ids:
-                        self._members_start_pos[id(item)] = QPointF(item.pos())
-                        self._members_refs[id(item)] = item
+            # 通过几何交集实时判定成员，并缓存到拖拽期间使用
+            # Determine members by geometric intersection and cache for drag duration
+            self._drag_members = []  # [(item, start_pos)] 缓存成员及起始位置
+            for member in self.get_members_by_intersection():
+                self._drag_members.append((member, QPointF(member.pos())))
         
         super().mousePressEvent(event)
     
@@ -393,11 +411,10 @@ class GroupItem(QGraphicsRectItem):
             # 计算移动量（基于最新 pos() 的变化）/ Calculate delta from updated pos()
             delta = self.pos() - self._undo_start_pos
             
-            # 直接使用缓存的成员引用移动（无需遍历全场景）
-            # Use cached member refs directly (no full scene traversal needed)
-            for item_id, item in self._members_refs.items():
-                if item_id in self._members_start_pos:
-                    item.setPos(self._members_start_pos[item_id] + delta)
+            # 直接使用拖拽开始时缓存的成员列表（无需每帧重新判定）
+            # Use members cached at drag start (no per-frame re-evaluation needed)
+            for item, start_pos in self._drag_members:
+                item.setPos(start_pos + delta)
             return
     
     def mouseReleaseEvent(self, event):
@@ -433,8 +450,7 @@ class GroupItem(QGraphicsRectItem):
                             main_window.record_group_move_action(self, self._undo_start_pos, current_pos)
             
             self._undo_start_pos = None
-            self._members_start_pos = {}
-            self._members_refs = {}
+            self._drag_members = []
         
         super().mouseReleaseEvent(event)
     

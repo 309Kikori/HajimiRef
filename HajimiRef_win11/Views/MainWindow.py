@@ -440,7 +440,61 @@ class MainWindow(QMainWindow):
             if not any_overlap:
                 break
         
-        # 4) 计算偏移，锚定到原始选区的左上角 / Calculate offset, anchor to original selection top-left
+        # 4) 紧凑化压缩：反复尝试将每张图片向质心方向移动以消除多余间隙
+        #    只有在不产生新重叠的前提下才保留移动，确保布局尽可能紧凑
+        # Compaction phase: iteratively move each image toward centroid to eliminate
+        # excess gaps. A move is kept only if it doesn't create new overlaps.
+        # ─────────────────────────────────────────────────────────────────────
+        # compact_step: 每次向质心移动的步长（像素），值越大压缩越快但精度越低
+        # Step size (px) for each compaction move toward centroid. Larger = faster but less precise.
+        compact_step = 4.0
+        # compact_passes: 紧凑化的最大轮数，每轮尝试移动所有图片
+        # Maximum compaction passes. Each pass tries to move all images.
+        compact_passes = 60
+        
+        def has_overlap_with_others(idx, bods, sp):
+            """检查第 idx 个 body 是否与其他任何 body 重叠 / Check if body at idx overlaps any other body"""
+            a = bods[idx]
+            for k in range(len(bods)):
+                if k == idx:
+                    continue
+                b = bods[k]
+                hw_a = a['w'] / 2.0 + sp / 2.0
+                hh_a = a['h'] / 2.0 + sp / 2.0
+                hw_b = b['w'] / 2.0 + sp / 2.0
+                hh_b = b['h'] / 2.0 + sp / 2.0
+                if (hw_a + hw_b) - abs(b['x'] - a['x']) > 0 and (hh_a + hh_b) - abs(b['y'] - a['y']) > 0:
+                    return True
+            return False
+        
+        for _cp in range(compact_passes):
+            moved_any = False
+            ccx = sum(b['x'] for b in bodies) / n
+            ccy = sum(b['y'] for b in bodies) / n
+            for i in range(n):
+                dx_to_c = ccx - bodies[i]['x']
+                dy_to_c = ccy - bodies[i]['y']
+                dist = math.sqrt(dx_to_c ** 2 + dy_to_c ** 2)
+                if dist < 1.0:
+                    continue
+                # 归一化方向，移动 compact_step / Normalize direction, move by compact_step
+                step = min(compact_step, dist)
+                mx = dx_to_c / dist * step
+                my = dy_to_c / dist * step
+                # 暂存旧位置，尝试移动 / Save old position, try move
+                old_x, old_y = bodies[i]['x'], bodies[i]['y']
+                bodies[i]['x'] += mx
+                bodies[i]['y'] += my
+                # 如果产生了新重叠，回退 / If new overlap, revert
+                if has_overlap_with_others(i, bodies, spacing):
+                    bodies[i]['x'] = old_x
+                    bodies[i]['y'] = old_y
+                else:
+                    moved_any = True
+            if not moved_any:
+                break
+        
+        # 5) 计算偏移，锚定到原始选区的质心 / Calculate offset, anchor to original selection centroid
         orig_group_rect = QRectF()
         for item in ref_items:
             orig_group_rect = orig_group_rect.united(item.sceneBoundingRect())
@@ -455,7 +509,8 @@ class MainWindow(QMainWindow):
         offset_x = orig_center_x - new_cx
         offset_y = orig_center_y - new_cy
         
-        # 5) 应用最终位置 / Apply final positions
+        # 6) 计算每个 item 的目标位置 / Calculate target position for each item
+        target_positions = []  # [(item, target_pos)]
         for body in bodies:
             item = body['item']
             final_cx = body['x'] + offset_x
@@ -466,26 +521,91 @@ class MainWindow(QMainWindow):
             cur_center = cur_rect.center()
             dx = final_cx - cur_center.x()
             dy = final_cy - cur_center.y()
-            item.setPos(item.pos() + QPointF(dx, dy))
+            target_pos = item.pos() + QPointF(dx, dy)
+            target_positions.append((item, target_pos))
         
-        # 记录整理操作到撤销历史 / Record organize action to undo history
+        # 7) 弹性动画过渡：使用 QTimer 驱动逐帧插值动画
+        #    从原始位置平滑过渡到目标位置，带有 ease-out 缓动效果
+        # Spring animation transition: QTimer-driven frame-by-frame interpolation
+        # with ease-out easing from original to target positions.
+        # ─────────────────────────────────────────────────────────────────────
+        # anim_frames: 动画总帧数，越大动画越平滑但耗时越长
+        # Total animation frames. More = smoother but slower.
+        anim_frames = 20
+        # anim_interval_ms: 每帧间隔（毫秒），16ms ≈ 60fps
+        # Interval per frame (ms). 16ms ≈ 60fps.
+        anim_interval_ms = 16
+        
+        # 构建动画数据 / Build animation data
+        anim_data = []
+        for item, target_pos in target_positions:
+            start_pos = QPointF(item.pos())
+            anim_data.append({
+                'item': item,
+                'start': start_pos,
+                'target': target_pos,
+            })
+        
+        # 记录整理操作到撤销历史（在动画开始前记录，确保撤销能恢复到原始位置）
+        # Record organize action to undo history (before animation, so undo restores original)
         items_positions = []
         for item, old_pos in original_positions:
-            new_pos = QPointF(item.pos())
-            if (old_pos - new_pos).manhattanLength() > 1:
-                items_positions.append((item, old_pos, new_pos))
+            for ad in anim_data:
+                if ad['item'] is item:
+                    new_pos = ad['target']
+                    if (old_pos - new_pos).manhattanLength() > 1:
+                        items_positions.append((item, old_pos, new_pos))
+                    break
         
         if items_positions:
             self.undo_manager.push(OrganizeItemsCommand(items_positions))
         
-        # 整理后更新相关组的边界，避免图片溢出组框 / Update related group bounds after organizing to prevent overflow
+        # 收集受影响的组ID / Collect affected group IDs
         affected_group_ids = set()
         for item in ref_items:
             if hasattr(item, 'group_id') and item.group_id is not None:
                 affected_group_ids.add(item.group_id)
-        for gid in affected_group_ids:
-            if gid in self.groups:
-                self.update_group_bounds(self.groups[gid])
+        
+        # 使用闭包捕获动画状态 / Use closure to capture animation state
+        frame_counter = [0]
+        
+        def ease_out_cubic(t):
+            """三次方缓出函数：开始快，结束慢 / Cubic ease-out: fast start, slow finish"""
+            return 1.0 - (1.0 - t) ** 3
+        
+        def animate_frame():
+            frame_counter[0] += 1
+            t = frame_counter[0] / anim_frames
+            if t >= 1.0:
+                t = 1.0
+            
+            progress = ease_out_cubic(t)
+            
+            for ad in anim_data:
+                current_x = ad['start'].x() + (ad['target'].x() - ad['start'].x()) * progress
+                current_y = ad['start'].y() + (ad['target'].y() - ad['start'].y()) * progress
+                ad['item'].setPos(current_x, current_y)
+            
+            self.view.viewport().update()
+            
+            if t >= 1.0:
+                # 动画完成，停止定时器 / Animation complete, stop timer
+                self._organize_anim_timer.stop()
+                self._organize_anim_timer = None
+                
+                # 动画结束后更新组边界 / Update group bounds after animation
+                for gid in affected_group_ids:
+                    if gid in self.groups:
+                        self.update_group_bounds(self.groups[gid])
+        
+        # 如果有正在进行的动画，先停止 / Stop any ongoing animation
+        if hasattr(self, '_organize_anim_timer') and self._organize_anim_timer is not None:
+            self._organize_anim_timer.stop()
+        
+        # 启动动画定时器 / Start animation timer
+        self._organize_anim_timer = QTimer(self)
+        self._organize_anim_timer.timeout.connect(animate_frame)
+        self._organize_anim_timer.start(anim_interval_ms)
 
     def add_images(self):
         """
@@ -1026,12 +1146,22 @@ class MainWindow(QMainWindow):
         
         self.view.viewport().update()
     
+    def _get_group_members(self, group_item):
+        """
+        通过 member_ids 精确获取组的成员列表（单一权威来源）
+        Get group members precisely via member_ids (single source of truth)
+        """
+        members = []
+        for item in self.scene.items():
+            if isinstance(item, RefItem) and id(item) in group_item.member_ids:
+                members.append(item)
+        return members
+    
     def update_group_bounds(self, group_item):
         """
         更新组的边界 / Update group bounds
         """
-        members = [item for item in self.scene.items() 
-                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        members = self._get_group_members(group_item)
         group_item.update_bounds(members)
     
     def update_all_group_bounds(self):
@@ -1059,8 +1189,7 @@ class MainWindow(QMainWindow):
         """
         解散组 / Ungroup
         """
-        members = [item for item in self.scene.items() 
-                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        members = self._get_group_members(group_item)
         
         # 记录撤销 / Record undo
         self.undo_manager.push(UngroupCommand(self.scene, group_item, members, self.groups))
@@ -1080,8 +1209,7 @@ class MainWindow(QMainWindow):
         """
         记录组移动操作到撤销历史 / Record group move action to undo history
         """
-        members = [item for item in self.scene.items() 
-                   if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == group_item.group_id]
+        members = self._get_group_members(group_item)
         
         # 计算移动偏移 / Calculate movement delta
         delta = new_pos - old_pos
@@ -1115,11 +1243,7 @@ class MainWindow(QMainWindow):
         
         # 第1步：检查现有成员是否仍在组框内，不在则移除 / Step 1: Remove members outside group bounds
         members_to_remove = []
-        for item in self.scene.items():
-            if not isinstance(item, RefItem):
-                continue
-            if not (hasattr(item, 'group_id') and item.group_id == group_item.group_id):
-                continue
+        for item in self._get_group_members(group_item):
             # 使用图片中心点判定是否在组框内 / Use image center to check if inside group bounds
             item_center = item.sceneBoundingRect().center()
             if not group_rect.contains(item_center):
@@ -1130,8 +1254,7 @@ class MainWindow(QMainWindow):
             group_item.remove_member(item)
         
         # 如果移除后成员不足2个，自动解散 / Auto ungroup if less than 2 members
-        remaining_members = [i for i in self.scene.items() 
-                            if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == group_item.group_id]
+        remaining_members = self._get_group_members(group_item)
         if len(remaining_members) < 2:
             self.ungroup(group_item)
             self.view.viewport().update()
@@ -1143,7 +1266,7 @@ class MainWindow(QMainWindow):
                 continue
             
             # 跳过已经在此组中的图片 / Skip images already in this group
-            if hasattr(item, 'group_id') and item.group_id == group_item.group_id:
+            if id(item) in group_item.member_ids:
                 continue
             
             # 获取图片的中心点 / Get image center point
@@ -1158,9 +1281,7 @@ class MainWindow(QMainWindow):
                         old_group = self.groups[old_group_id]
                         old_group.remove_member(item)
                         # 如果旧组只剩一个或零个成员，自动解散 / Auto ungroup if old group has 1 or 0 members left
-                        old_members = [i for i in self.scene.items() 
-                                       if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == old_group_id]
-                        if len(old_members) < 2:
+                        if len(old_group.member_ids) < 2:
                             self.ungroup(old_group)
                 
                 # 将图片加入新组 / Add image to new group
@@ -1196,9 +1317,7 @@ class MainWindow(QMainWindow):
             group_item.remove_member(item)
             
             # 如果组只剩一个或零个成员，自动解散 / Auto ungroup if group has 1 or 0 members left
-            members = [i for i in self.scene.items() 
-                       if isinstance(i, RefItem) and hasattr(i, 'group_id') and i.group_id == group_id]
-            if len(members) < 2:
+            if len(group_item.member_ids) < 2:
                 self.ungroup(group_item)
             
             self.view.viewport().update()

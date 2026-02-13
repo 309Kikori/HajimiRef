@@ -1037,28 +1037,91 @@ class AppState {
             if !anyOverlap { break }
         }
         
-        // 6. 偏移校正：对齐到原始质心 / Offset correction: align to original centroid
+        // 6. 紧凑化压缩：反复尝试将每张图片向质心方向移动以消除多余间隙
+        //    只有在不产生新重叠的前提下才保留移动，确保布局尽可能紧凑
+        // Compaction phase: iteratively move each image toward centroid to eliminate
+        // excess gaps. A move is kept only if it doesn't create new overlaps.
+        // ─────────────────────────────────────────────────────────────────────
+        // compactStep: 每次向质心移动的步长（pt），值越大压缩越快但精度越低
+        // Step size (pt) per compaction move. Larger = faster but less precise.
+        let compactStep: CGFloat = 4.0
+        // compactPasses: 紧凑化最大轮数 / Maximum compaction passes
+        let compactPasses = 60
+        
+        func hasOverlapWithOthers(_ idx: Int, _ bods: [Body], _ sp: CGFloat) -> Bool {
+            let a = bods[idx]
+            for k in 0..<bods.count {
+                if k == idx { continue }
+                let b = bods[k]
+                let hwA = a.w / 2.0 + sp / 2.0
+                let hhA = a.h / 2.0 + sp / 2.0
+                let hwB = b.w / 2.0 + sp / 2.0
+                let hhB = b.h / 2.0 + sp / 2.0
+                if (hwA + hwB) - abs(b.x - a.x) > 0 && (hhA + hhB) - abs(b.y - a.y) > 0 {
+                    return true
+                }
+            }
+            return false
+        }
+        
+        for _ in 0..<compactPasses {
+            var movedAny = false
+            let ccx = bodies.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(n)
+            let ccy = bodies.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(n)
+            for i in 0..<n {
+                let dxC = ccx - bodies[i].x
+                let dyC = ccy - bodies[i].y
+                let dist = sqrt(dxC * dxC + dyC * dyC)
+                if dist < 1.0 { continue }
+                // 归一化方向，移动 compactStep / Normalize direction, move by compactStep
+                let step = min(compactStep, dist)
+                let mx = dxC / dist * step
+                let my = dyC / dist * step
+                // 暂存旧位置，尝试移动 / Save old, try move
+                let oldX = bodies[i].x
+                let oldY = bodies[i].y
+                bodies[i].x += mx
+                bodies[i].y += my
+                // 如果产生了新重叠，回退 / If new overlap, revert
+                if hasOverlapWithOthers(i, bodies, spacing) {
+                    bodies[i].x = oldX
+                    bodies[i].y = oldY
+                } else {
+                    movedAny = true
+                }
+            }
+            if !movedAny { break }
+        }
+        
+        // 7. 偏移校正：对齐到原始质心 / Offset correction: align to original centroid
         let newCX = bodies.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(n)
         let newCY = bodies.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(n)
         let offsetX = origCenterX - newCX
         let offsetY = origCenterY - newCY
         
-        // 7. 应用最终位置 / Apply final positions
-        for body in bodies {
-            images[body.index].x = body.x + offsetX
-            images[body.index].y = body.y + offsetY
+        // 8. 使用弹性动画过渡应用最终位置 / Apply final positions with spring animation transition
+        //    SwiftUI 的 withAnimation(.spring()) 自动利用 Core Animation / Metal 实现流畅的 GPU 加速动画
+        //    Leverages SwiftUI's withAnimation(.spring()) for smooth GPU-accelerated animation
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
+            for body in bodies {
+                images[body.index].x = body.x + offsetX
+                images[body.index].y = body.y + offsetY
+            }
         }
         
-        // 8. 整理后更新相关组的边界 / Update related group bounds after organizing
+        // 9. 整理后更新相关组的边界 / Update related group bounds after organizing
+        //    延迟更新以等待动画完成 / Delay to wait for animation completion
         var affectedGroupIds = Set<UUID>()
         for body in bodies {
             if let gid = images[body.index].groupId {
                 affectedGroupIds.insert(gid)
             }
         }
-        for gid in affectedGroupIds {
-            if let gi = groups.firstIndex(where: { $0.id == gid }) {
-                updateGroupBounds(group: &groups[gi])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [self] in
+            for gid in affectedGroupIds {
+                if let gi = groups.firstIndex(where: { $0.id == gid }) {
+                    updateGroupBounds(group: &groups[gi])
+                }
             }
         }
     }

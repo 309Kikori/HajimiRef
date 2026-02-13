@@ -323,13 +323,18 @@ class GroupItem(QGraphicsRectItem):
             self._undo_start_pos = QPointF(self.pos())  # 使用 pos() 而不是 rect().topLeft()
             self._drag_start_rect_pos = QPointF(self.rect().topLeft())  # 保存 rect 的初始位置
             
-            # 同时记录所有成员的起始位置 / Record start positions of all members
-            self._members_start_pos = {}
+            # 通过 member_ids 精确查找成员并记录起始位置（避免遍历全场景）
+            # Use member_ids to precisely find members and record start positions
+            # (avoids full scene traversal and stale group_id references)
+            self._members_start_pos = {}  # {id(item): QPointF(start_pos)}
+            self._members_refs = {}       # {id(item): item} 缓存成员引用 / Cache member refs
             scene = self.scene()
             if scene:
+                # 先建立 member_ids 到 item 的映射 / Build member_ids -> item mapping
                 for item in scene.items():
-                    if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
+                    if isinstance(item, RefItem) and id(item) in self.member_ids:
                         self._members_start_pos[id(item)] = QPointF(item.pos())
+                        self._members_refs[id(item)] = item
         
         super().mousePressEvent(event)
     
@@ -380,18 +385,20 @@ class GroupItem(QGraphicsRectItem):
             return
         
         if self._is_dragging and self._undo_start_pos is not None:
-            # 计算移动量（基于 pos() 的变化）/ Calculate movement delta (based on pos() change)
+            # 先让 Qt 更新 GroupItem 的 pos()，再基于最新 pos 同步成员位置
+            # Call super() FIRST so Qt updates GroupItem.pos(), then sync members
+            # 这消除了成员落后一帧的延迟感 / Eliminates 1-frame lag for member positions
+            super().mouseMoveEvent(event)
+            
+            # 计算移动量（基于最新 pos() 的变化）/ Calculate delta from updated pos()
             delta = self.pos() - self._undo_start_pos
             
-            # 移动所有成员 / Move all members
-            scene = self.scene()
-            if scene:
-                for item in scene.items():
-                    if isinstance(item, RefItem) and hasattr(item, 'group_id') and item.group_id == self.group_id:
-                        if id(item) in self._members_start_pos:
-                            item.setPos(self._members_start_pos[id(item)] + delta)
-        
-        super().mouseMoveEvent(event)
+            # 直接使用缓存的成员引用移动（无需遍历全场景）
+            # Use cached member refs directly (no full scene traversal needed)
+            for item_id, item in self._members_refs.items():
+                if item_id in self._members_start_pos:
+                    item.setPos(self._members_start_pos[item_id] + delta)
+            return
     
     def mouseReleaseEvent(self, event):
         if self._is_resizing:
@@ -427,6 +434,7 @@ class GroupItem(QGraphicsRectItem):
             
             self._undo_start_pos = None
             self._members_start_pos = {}
+            self._members_refs = {}
         
         super().mouseReleaseEvent(event)
     

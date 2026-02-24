@@ -293,6 +293,9 @@ class AppState {
             
             // [撤销/重做] 记录添加图片操作
             undoManager.recordAction(.addImage(image: newImage))
+            
+            // [画布扩展] 添加图片后检查并扩展画板边界
+            updateBoardBoundsIfNeeded()
         } catch {
             print("Failed to load image: \(error)")
         }
@@ -305,6 +308,9 @@ class AppState {
         
         // [撤销/重做] 记录添加图片操作
         undoManager.recordAction(.addImage(image: newImage))
+        
+        // [画布扩展] 添加图片后检查并扩展画板边界
+        updateBoardBoundsIfNeeded()
     }
     
     func removeImage(id: UUID) {
@@ -349,11 +355,15 @@ class AppState {
     /// 撤销上一步操作
     func undo() {
         undoManager.undo(appState: self)
+        // [画布扩展] 撤销后检查并扩展画板边界
+        updateBoardBoundsIfNeeded()
     }
     
     /// 重做上一步撤销的操作
     func redo() {
         undoManager.redo(appState: self)
+        // [画布扩展] 重做后检查并扩展画板边界
+        updateBoardBoundsIfNeeded()
     }
     
     // MARK: - Board Bounds Management (画板边界管理)

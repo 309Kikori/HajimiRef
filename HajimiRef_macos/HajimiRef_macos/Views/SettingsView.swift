@@ -211,24 +211,30 @@ extension Color {
         )
     }
     
+    /// 将 Color 转换为 Hex 字符串（安全处理 Display P3 等宽色域颜色）
+    /// 通过 NSColor.usingColorSpace(.sRGB) 进行原生色彩空间转换，
+    /// 避免直接从 cgColor.components 取值导致的 16 位颜色越界问题。
     func toHex() -> String? {
-        guard let components = cgColor?.components, components.count >= 3 else {
+        // 先转为 NSColor，再强制转换到 sRGB 色彩空间
+        guard let sRGBColor = NSColor(self).usingColorSpace(.sRGB) else {
             return nil
         }
         
-        let r = Float(components[0])
-        let g = Float(components[1])
-        let b = Float(components[2])
-        var a = Float(1.0)
+        // 从 sRGB 颜色中提取分量（保证值域 [0, 1]）
+        let r = lroundf(Float(sRGBColor.redComponent) * 255)
+        let g = lroundf(Float(sRGBColor.greenComponent) * 255)
+        let b = lroundf(Float(sRGBColor.blueComponent) * 255)
+        let a = lroundf(Float(sRGBColor.alphaComponent) * 255)
         
-        if components.count >= 4 {
-            a = Float(components[3])
-        }
+        // 防御性 clamp（处理浮点精度边界）
+        let clamp = { (v: Int) in min(max(v, 0), 255) }
         
-        if a != 1.0 {
-            return String(format: "#%02lX%02lX%02lX%02lX", lroundf(r * 255), lroundf(g * 255), lroundf(b * 255), lroundf(a * 255))
+        if a < 255 {
+            return String(format: "#%02lX%02lX%02lX%02lX",
+                          clamp(r), clamp(g), clamp(b), clamp(a))
         } else {
-            return String(format: "#%02lX%02lX%02lX", lroundf(r * 255), lroundf(g * 255), lroundf(b * 255))
+            return String(format: "#%02lX%02lX%02lX",
+                          clamp(r), clamp(g), clamp(b))
         }
     }
 }

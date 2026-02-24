@@ -612,6 +612,9 @@ struct ImageView: View {
                                 // 4. 重置状态
                                 appState.currentDragOffset = .zero
                                 dragStartPositions.removeAll()
+                                
+                                // [画布扩展] 拖拽结束后检查是否需要扩展画板边界
+                                appState.updateBoardBoundsIfNeeded()
                             }
                         ,
                         SimultaneousGesture(
@@ -639,6 +642,9 @@ struct ImageView: View {
                                     }
                                     zoomScale = 1.0
                                     scaleStartValue = 1.0
+                                    
+                                    // [画布扩展] 缩放结束后检查是否需要扩展画板边界
+                                    appState.updateBoardBoundsIfNeeded()
                                 }
                             ,
                             // Rotate (Trackpad)
@@ -881,6 +887,9 @@ struct ImageView: View {
                 appState.multiSelectScaleFactor = 1.0
                 initialSelectionBounds = nil
                 resizeStartStates.removeAll()
+                
+                // [画布扩展] 多选缩放结束后检查是否需要扩展画板边界
+                appState.updateBoardBoundsIfNeeded()
             }
     }
 }
@@ -1221,6 +1230,9 @@ struct GroupView: View {
                             ))
                         }
                     }
+                    
+                    // [画布扩展] 组拖拽结束后检查是否需要扩展画板边界
+                    appState.updateBoardBoundsIfNeeded()
                     
                     dragStartPosition = nil
                     memberStartPositions.removeAll()

@@ -313,6 +313,79 @@ class AppState {
         updateBoardBoundsIfNeeded()
     }
     
+    // MARK: - Copy / Paste (复制/粘贴)
+    
+    /// 复制选中的图片到剪贴板 / Copy selected images to pasteboard
+    func copySelectedImages() {
+        let selected = images.filter { selectedImageIds.contains($0.id) }
+        guard !selected.isEmpty else { return }
+        
+        // 将选中图片的 base64 数据写入剪贴板
+        // 如果只有一张图片，直接将图片写入剪贴板（兼容外部粘贴）
+        // 同时在自定义 pasteboard type 中存储完整的图片实体信息（保留 scale/rotation 等）
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        
+        // 1. 写入自定义数据（用于应用内粘贴，保留所有属性）
+        if let jsonData = try? JSONEncoder().encode(selected) {
+            pasteboard.setData(jsonData, forType: NSPasteboard.PasteboardType("com.hajimi.ref.images"))
+        }
+        
+        // 2. 同时写入标准图片格式（用于外部粘贴）
+        if selected.count == 1, let nsImage = selected.first?.nsImage {
+            pasteboard.writeObjects([nsImage])
+        }
+    }
+    
+    /// 从剪贴板粘贴图片 / Paste images from pasteboard
+    func pasteImages() {
+        let pasteboard = NSPasteboard.general
+        
+        // 1. 优先尝试从自定义类型粘贴（应用内复制的图片，保留所有属性）
+        if let data = pasteboard.data(forType: NSPasteboard.PasteboardType("com.hajimi.ref.images")),
+           let copiedImages = try? JSONDecoder().decode([ImageEntity].self, from: data) {
+            
+            // 计算偏移量（避免与原图完全重叠）
+            let offset: CGFloat = 30
+            var newIds = Set<UUID>()
+            
+            for var img in copiedImages {
+                // 生成新 ID，偏移位置
+                img.id = UUID()
+                img.x += offset
+                img.y += offset
+                img.groupId = nil // 粘贴的图片不属于任何组
+                images.append(img)
+                undoManager.recordAction(.addImage(image: img))
+                newIds.insert(img.id)
+            }
+            
+            // 选中新粘贴的图片
+            selectedImageIds = newIds
+            updateBoardBoundsIfNeeded()
+            return
+        }
+        
+        // 2. 尝试从标准图片格式粘贴（从外部复制的图片）
+        if let nsImage = NSImage(pasteboard: pasteboard),
+           let tiffData = nsImage.tiffRepresentation,
+           let bitmapRep = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            addImage(data: pngData)
+            return
+        }
+        
+        // 3. 尝试从文件 URL 粘贴
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true,
+            .urlReadingContentsConformToTypes: ["public.image"]
+        ]) as? [URL] {
+            for url in urls {
+                addImage(from: url)
+            }
+        }
+    }
+    
     func removeImage(id: UUID) {
         // [撤销/重做] 记录删除图片操作
         if let index = images.firstIndex(where: { $0.id == id }) {

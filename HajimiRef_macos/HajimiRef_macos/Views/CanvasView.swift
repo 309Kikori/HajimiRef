@@ -130,6 +130,20 @@ struct WindowAccessor: NSViewRepresentable {
                 return true
             }
             
+            // [复制/粘贴] Cmd+C 复制, Cmd+V 粘贴
+            if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
+                // 排除 Cmd+Shift+C（已用于复制画板到剪贴板）
+                if !event.modifierFlags.contains(.shift) {
+                    appState.copySelectedImages()
+                    return true
+                }
+            }
+            
+            if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+                appState.pasteImages()
+                return true
+            }
+            
             // G 键打组 / G key to group
             if event.charactersIgnoringModifiers == "g" {
                 appState.groupSelectedImages()
@@ -688,6 +702,15 @@ struct ImageView: View {
                     }
                 }
                 .contextMenu {
+                    // [打组] 当选中≥2张图片时显示打组选项
+                    if appState.selectedImageIds.count >= 2 {
+                        Button(LocalizedStringKey("Group Selected (G)")) {
+                            appState.groupSelectedImages()
+                        }
+                        
+                        Divider()
+                    }
+                    
                     Button(LocalizedStringKey("Smart Sort")) {
                         appState.smartSortSelected()
                     }

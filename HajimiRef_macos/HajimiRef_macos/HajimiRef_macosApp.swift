@@ -72,6 +72,22 @@ struct HajimiRef_macosApp: App {
                 .disabled(!appState.undoManager.canRedo)
             }
             
+            // 编辑菜单：复制/粘贴
+            // 添加复制和粘贴命令，用于复制选中的图片
+            // 快捷键：Cmd + C, Cmd + V
+            CommandGroup(replacing: .pasteboard) {
+                Button(LocalizedStringKey("Copy")) {
+                    appState.copySelectedImages()
+                }
+                .keyboardShortcut("c", modifiers: .command)
+                .disabled(appState.selectedImageIds.isEmpty)
+                
+                Button(LocalizedStringKey("Paste")) {
+                    appState.pasteImages()
+                }
+                .keyboardShortcut("v", modifiers: .command)
+            }
+            
             // 文件菜单：导入
             // 在"文件"菜单中添加"打开图片..."命令。
             // 快捷键：Cmd + O

@@ -524,14 +524,16 @@ class MainWindow(QMainWindow):
             target_pos = item.pos() + QPointF(dx, dy)
             target_positions.append((item, target_pos))
         
-        # 7) 弹性动画过渡：使用 QTimer 驱动逐帧插值动画
-        #    从原始位置平滑过渡到目标位置，带有 ease-out 缓动效果
+        # 7) 弹簧动画过渡：使用 QTimer 驱动逐帧插值动画
+        #    采用阻尼弹簧物理模型（与 macOS SwiftUI .spring() 一致），
+        #    实现 overshoot 回弹的"Q弹灵动"效果
         # Spring animation transition: QTimer-driven frame-by-frame interpolation
-        # with ease-out easing from original to target positions.
+        # using a damped spring physics model (matching macOS SwiftUI .spring()),
+        # producing overshoot bounce for a lively, springy feel.
         # ─────────────────────────────────────────────────────────────────────
-        # anim_frames: 动画总帧数，越大动画越平滑但耗时越长
-        # Total animation frames. More = smoother but slower.
-        anim_frames = 20
+        # anim_frames: 动画总帧数，45帧 × 16ms ≈ 720ms，与 macOS spring(response:0.5) 视觉接近
+        # Total animation frames. 45 × 16ms ≈ 720ms, visually close to macOS spring(response:0.5).
+        anim_frames = 45
         # anim_interval_ms: 每帧间隔（毫秒），16ms ≈ 60fps
         # Interval per frame (ms). 16ms ≈ 60fps.
         anim_interval_ms = 16
@@ -602,9 +604,28 @@ class MainWindow(QMainWindow):
         # 使用闭包捕获动画状态 / Use closure to capture animation state
         frame_counter = [0]
         
-        def ease_out_cubic(t):
-            """三次方缓出函数：开始快，结束慢 / Cubic ease-out: fast start, slow finish"""
-            return 1.0 - (1.0 - t) ** 3
+        def spring_damped(t, damping_ratio=0.75, frequency=2.0 * math.pi / 0.5):
+            """
+            阻尼弹簧缓动函数（与 macOS SwiftUI .spring(response:0.5, dampingFraction:0.75) 等效）
+            Damped spring easing (equivalent to macOS SwiftUI .spring(response:0.5, dampingFraction:0.75))
+            
+            - damping_ratio < 1.0 → 欠阻尼，产生 overshoot 回弹（"Q弹"感）
+            - damping_ratio = 1.0 → 临界阻尼，无回弹但最快收敛
+            - frequency: 弹簧固有频率 ω₀ = 2π / response
+            
+            数学模型 / Math model:
+                x(t) = 1 - e^(-ζω₀t) * (cos(ωd·t) + (ζω₀/ωd)·sin(ωd·t))
+                其中 ωd = ω₀ · √(1 - ζ²)  (阻尼振荡频率)
+            """
+            if t >= 1.0:
+                return 1.0
+            zeta = damping_ratio
+            omega0 = frequency
+            omega_d = omega0 * math.sqrt(1.0 - zeta * zeta)
+            decay = math.exp(-zeta * omega0 * t)
+            cos_part = math.cos(omega_d * t)
+            sin_part = (zeta * omega0 / omega_d) * math.sin(omega_d * t)
+            return 1.0 - decay * (cos_part + sin_part)
         
         def animate_frame():
             frame_counter[0] += 1
@@ -612,7 +633,7 @@ class MainWindow(QMainWindow):
             if t >= 1.0:
                 t = 1.0
             
-            progress = ease_out_cubic(t)
+            progress = spring_damped(t)
             
             # 插值图片位置 / Interpolate image positions
             for ad in anim_data:

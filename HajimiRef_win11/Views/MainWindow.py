@@ -47,6 +47,13 @@ class MainWindow(QMainWindow):
         self.paste_shortcut = QShortcut(QKeySequence.Paste, self)
         self.paste_shortcut.activated.connect(self.paste_image)
         
+        # Ctrl+C 复制选中图片快捷键 / Ctrl+C copy selected images shortcut
+        self.copy_shortcut = QShortcut(QKeySequence.Copy, self)
+        self.copy_shortcut.activated.connect(self.copy_selected_items)
+        
+        # 应用内剪贴板：直接索引，零编解码 / In-app clipboard: direct reference, zero encoding
+        self._copied_items = []
+        
         # G键打组快捷键 / G key grouping shortcut
         self.group_shortcut = QShortcut(QKeySequence("G"), self)
         self.group_shortcut.activated.connect(self.group_selected_items)
@@ -698,15 +705,18 @@ class MainWindow(QMainWindow):
 
     def create_item_from_image(self, image, x, y):
         """
-        从 QImage 创建图片项 / Create image item from QImage
+        从 QImage 创建图片项（直接转换，跳过PNG编解码）/ Create image item from QImage (direct conversion, skip PNG encoding)
         """
         if not image.isNull():
-            ba = QByteArray()
-            buf = QBuffer(ba)
-            buf.open(QBuffer.WriteOnly)
-            image.save(buf, "PNG")
-            data = ba.data()
-            self.create_item_from_data(data, x, y)
+            # 直接 QImage → QPixmap，零编解码开销 / Direct QImage → QPixmap, zero encoding overhead
+            pixmap = QPixmap.fromImage(image)
+            if not pixmap.isNull():
+                item = RefItem(pixmap)  # image_data 为 None，惰性生成 / image_data is None, lazy generation
+                item.setPos(x, y)
+                self.scene.addItem(item)
+                self.undo_manager.push(AddItemCommand(self.scene, item))
+                return item
+        return None
 
     def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, zIndex=0, group_id=None, record_undo=True):
         """
@@ -746,26 +756,66 @@ class MainWindow(QMainWindow):
         for item in selected:
             self.scene.removeItem(item)
 
+    def copy_selected_items(self):
+        """
+        复制选中的图片到应用内剪贴板（直接索引，零开销）/ Copy selected images to in-app clipboard (direct reference, zero overhead)
+        """
+        selected = [item for item in self.scene.selectedItems() if isinstance(item, RefItem)]
+        if not selected:
+            return
+        
+        # 直接存储引用信息：pixmap、image_data、位置、缩放、旋转、组ID
+        # Direct reference: pixmap, image_data, position, scale, rotation, group_id
+        self._copied_items = []
+        for item in selected:
+            self._copied_items.append({
+                'pixmap': item.pixmap(),         # QPixmap 引用，零拷贝
+                'image_data': item.image_data,   # bytes 引用，零拷贝
+                'x': item.x(),
+                'y': item.y(),
+                'scale': item.scale(),
+                'rotation': item.rotation(),
+                'zIndex': item.zValue(),
+            })
+    
     def paste_image(self):
         """
-        从剪贴板粘贴图片 / Paste image from clipboard
+        粘贴图片：优先从应用内缓存粘贴（零编解码），其次从系统剪贴板
+        Paste image: prefer in-app cache (zero encoding), then system clipboard
         """
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        
+        # 1. 优先从应用内缓存粘贴（直接索引，瞬时完成）
+        # Priority: paste from in-app cache (direct reference, instant)
+        if self._copied_items:
+            offset = 30  # 偏移避免重叠 / Offset to avoid overlap
+            new_items = []
+            for info in self._copied_items:
+                item = RefItem(info['pixmap'], info['image_data'])
+                item.setPos(info['x'] + offset, info['y'] + offset)
+                item.setScale(info['scale'])
+                item.setRotation(info['rotation'])
+                item.setZValue(info['zIndex'])
+                self.scene.addItem(item)
+                self.undo_manager.push(AddItemCommand(self.scene, item))
+                new_items.append(item)
+            
+            # 选中新粘贴的图片 / Select newly pasted items
+            self.scene.clearSelection()
+            for item in new_items:
+                item.setSelected(True)
+            return
+        
+        # 2. 从系统剪贴板粘贴 / Paste from system clipboard
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
-
-        center = self.view.mapToScene(self.view.viewport().rect().center())
 
         if mime_data.hasImage():
             image = clipboard.image()
             if not image.isNull():
-                # Convert QImage to bytes (PNG)
-                ba = QByteArray()
-                buf = QBuffer(ba)
-                buf.open(QBuffer.WriteOnly)
-                image.save(buf, "PNG")
-                data = ba.data()
-                
-                self.create_item_from_data(data, center.x(), center.y())
+                # 直接 QImage → QPixmap，跳过 PNG 编解码
+                # Direct QImage → QPixmap, skip PNG encode/decode
+                self.create_item_from_image(image, center.x(), center.y())
         elif mime_data.hasUrls():
             offset = 0
             for url in mime_data.urls():

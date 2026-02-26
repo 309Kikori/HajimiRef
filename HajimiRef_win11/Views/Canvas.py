@@ -753,6 +753,15 @@ class RefItem(QGraphicsPixmapItem):
         将图片信息序列化为字典，用于保存 / Serialize image info to dict for saving
         """
         pos = self.scenePos()
+        # 惰性编码：image_data 为 None 时从 pixmap 生成 PNG bytes
+        # Lazy encoding: generate PNG bytes from pixmap when image_data is None
+        if self.image_data is None:
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QBuffer.WriteOnly)
+            self.pixmap().save(buf, "PNG")
+            self.image_data = ba.data()
+        
         # Convert bytes/QByteArray to base64 string
         if isinstance(self.image_data, QByteArray):
             b64_data = self.image_data.toBase64().data().decode('utf-8')

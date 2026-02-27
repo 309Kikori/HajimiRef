@@ -2,11 +2,13 @@ import SwiftUI
 
 // MARK: - Smart Guides 辅助线数据
 // 表示一条活跃的智能对齐辅助线
-struct SnapLine: Equatable {
-    enum Axis {
+struct SnapLine: Equatable, Identifiable {
+    enum Axis: Equatable {
         case x  // 垂直辅助线（X坐标固定）
         case y  // 水平辅助线（Y坐标固定）
     }
+    // 使用 axis+value 生成稳定 ID，使 SwiftUI 能正确追踪同一条线的出现/消失
+    var id: String { "\(axis == .x ? "x" : "y")_\(String(format: "%.1f", value))" }
     let axis: Axis
     let value: CGFloat    // 辅助线的坐标值
     let start: CGFloat    // 辅助线绘制起点（另一轴的坐标）

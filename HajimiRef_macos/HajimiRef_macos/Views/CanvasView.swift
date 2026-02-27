@@ -304,14 +304,14 @@ struct CanvasView: View {
                 
                 // 4. Smart Guides Overlay (画布空间)
                 // [智能对齐] 绘制辅助线，跟随画布变换
-                if !appState.activeSnapLines.isEmpty {
-                    SmartGuidesOverlay(
-                        snapLines: appState.activeSnapLines,
-                        canvasOffset: appState.canvasOffset,
-                        canvasScale: appState.canvasScale
-                    )
-                    .allowsHitTesting(false)
-                }
+                // 始终挂载，通过 SwiftUI 原生 transition + animation 实现逐条淡入淡出
+                SmartGuidesOverlay(
+                    snapLines: appState.activeSnapLines,
+                    canvasOffset: appState.canvasOffset,
+                    canvasScale: appState.canvasScale
+                )
+                .allowsHitTesting(false)
+                .animation(.easeInOut(duration: 0.15), value: appState.activeSnapLines)
             }
             .clipped() // [视觉设计] 确保内容不会溢出窗口边界。
             // .background(Color(nsColor: .darkGray)) // Removed: Replaced by custom background layer
@@ -615,10 +615,15 @@ struct ImageView: View {
                                         canvasScale: appState.canvasScale
                                     )
                                     appState.currentDragOffset = snapResult.correctedOffset
-                                    appState.activeSnapLines = snapResult.snapLines
+                                    // [动画] 辅助线出现/切换使用原生 SwiftUI 快速淡入
+                                    withAnimation(.easeIn(duration: 0.08)) {
+                                        appState.activeSnapLines = snapResult.snapLines
+                                    }
                                 } else {
                                     appState.currentDragOffset = rawOffset
-                                    appState.activeSnapLines = []
+                                    withAnimation(.easeOut(duration: 0.12)) {
+                                        appState.activeSnapLines = []
+                                    }
                                 }
                             }
                             .onEnded { value in
@@ -659,8 +664,10 @@ struct ImageView: View {
                                 appState.currentDragOffset = .zero
                                 dragStartPositions.removeAll()
                                 
-                                // [Smart Guides] 清除辅助线和缓存
-                                appState.activeSnapLines = []
+                                // [Smart Guides] 清除辅助线（原生淡出动画）和缓存
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    appState.activeSnapLines = []
+                                }
                                 appState.snapXGuides = []
                                 appState.snapYGuides = []
                                 
@@ -1543,7 +1550,7 @@ struct GroupSettingsSheet: View {
 }
 
 // MARK: - Smart Guides Overlay
-/// [智能对齐] 辅助线绘制覆盖层 - 使用原生 SwiftUI Canvas 绘制
+/// [智能对齐] 辅助线绘制覆盖层 - 使用原生 SwiftUI View + ForEach + transition 实现逐条动画
 struct SmartGuidesOverlay: View {
     var snapLines: [SnapLine]
     var canvasOffset: CGSize
@@ -1551,40 +1558,61 @@ struct SmartGuidesOverlay: View {
     
     var body: some View {
         GeometryReader { geometry in
-            Canvas { context, size in
-                let centerX = size.width / 2
-                let centerY = size.height / 2
-                
-                for line in snapLines {
-                    var path = Path()
-                    
-                    switch line.axis {
-                    case .x:
-                        // 垂直辅助线：世界坐标 → 屏幕坐标
-                        let screenX = line.value * canvasScale + canvasOffset.width * canvasScale + centerX
-                        let screenStartY = line.start * canvasScale + canvasOffset.height * canvasScale + centerY
-                        let screenEndY = line.end * canvasScale + canvasOffset.height * canvasScale + centerY
-                        path.move(to: CGPoint(x: screenX, y: screenStartY))
-                        path.addLine(to: CGPoint(x: screenX, y: screenEndY))
-                        
-                    case .y:
-                        // 水平辅助线：世界坐标 → 屏幕坐标
-                        let screenY = line.value * canvasScale + canvasOffset.height * canvasScale + centerY
-                        let screenStartX = line.start * canvasScale + canvasOffset.width * canvasScale + centerX
-                        let screenEndX = line.end * canvasScale + canvasOffset.width * canvasScale + centerX
-                        path.move(to: CGPoint(x: screenStartX, y: screenY))
-                        path.addLine(to: CGPoint(x: screenEndX, y: screenY))
-                    }
-                    
-                    // 亮蓝色虚线辅助线 / Bright cyan dashed guide line
-                    context.stroke(
-                        path,
-                        with: .color(Color(red: 0, green: 0.73, blue: 1.0, opacity: 0.8)),
+            let centerX = geometry.size.width / 2
+            let centerY = geometry.size.height / 2
+            
+            ZStack {
+                ForEach(snapLines) { line in
+                    SnapLineShape(
+                        line: line,
+                        canvasOffset: canvasOffset,
+                        canvasScale: canvasScale,
+                        centerX: centerX,
+                        centerY: centerY
+                    )
+                    .stroke(
+                        Color(red: 0, green: 0.73, blue: 1.0, opacity: 0.85),
                         style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                     )
+                    // [原生动画] 每条辅助线独立的淡入淡出 transition
+                    .transition(.opacity)
                 }
             }
         }
+    }
+}
+
+// MARK: - SnapLineShape
+/// 单条辅助线的 Shape，支持 SwiftUI 原生动画系统
+struct SnapLineShape: Shape {
+    let line: SnapLine
+    let canvasOffset: CGSize
+    let canvasScale: CGFloat
+    let centerX: CGFloat
+    let centerY: CGFloat
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        
+        switch line.axis {
+        case .x:
+            // 垂直辅助线：世界坐标 → 屏幕坐标
+            let screenX = line.value * canvasScale + canvasOffset.width * canvasScale + centerX
+            let screenStartY = line.start * canvasScale + canvasOffset.height * canvasScale + centerY
+            let screenEndY = line.end * canvasScale + canvasOffset.height * canvasScale + centerY
+            path.move(to: CGPoint(x: screenX, y: screenStartY))
+            path.addLine(to: CGPoint(x: screenX, y: screenEndY))
+            
+        case .y:
+            // 水平辅助线：世界坐标 → 屏幕坐标
+            let screenY = line.value * canvasScale + canvasOffset.height * canvasScale + centerY
+            let screenStartX = line.start * canvasScale + canvasOffset.width * canvasScale + centerX
+            let screenEndX = line.end * canvasScale + canvasOffset.width * canvasScale + centerX
+            path.move(to: CGPoint(x: screenStartX, y: screenY))
+            path.addLine(to: CGPoint(x: screenEndX, y: screenY))
+        }
+        
+        return path
     }
 }
 

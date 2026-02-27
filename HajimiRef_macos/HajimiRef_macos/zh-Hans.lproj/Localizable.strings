@@ -68,3 +68,7 @@
 "Font Size" = "字体大小";
 "OK" = "确定";
 "Cancel" = "取消";
+
+/* Smart Guides */
+"✓ Smart Guides (On)" = "✓ 智能对齐（已开启）";
+"Smart Guides (Off)" = "智能对齐（已关闭）";

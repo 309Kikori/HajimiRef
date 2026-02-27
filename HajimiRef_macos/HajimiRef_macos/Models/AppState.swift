@@ -38,6 +38,12 @@ class AppState {
     // 用于在调整大小时确定缩放中心。
     var multiSelectAnchor: CGPoint = .zero
     
+    // [Smart Guides] 智能对齐状态
+    var snapEnabled: Bool = true                            // 对齐开关
+    var activeSnapLines: [SnapLine] = []                    // 当前活跃辅助线
+    var snapXGuides: [SnapGuideEntry] = []                  // X方向参考线缓存
+    var snapYGuides: [SnapGuideEntry] = []                  // Y方向参考线缓存
+    
     // [组功能] 组设置弹窗控制
     var showGroupSettings: Bool = false
     var editingGroupId: UUID? = nil

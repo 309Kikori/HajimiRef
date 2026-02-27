@@ -301,6 +301,17 @@ struct CanvasView: View {
                         .position(x: rect.midX, y: rect.midY)
                         .allowsHitTesting(false)
                 }
+                
+                // 4. Smart Guides Overlay (画布空间)
+                // [智能对齐] 绘制辅助线，跟随画布变换
+                if !appState.activeSnapLines.isEmpty {
+                    SmartGuidesOverlay(
+                        snapLines: appState.activeSnapLines,
+                        canvasOffset: appState.canvasOffset,
+                        canvasScale: appState.canvasScale
+                    )
+                    .allowsHitTesting(false)
+                }
             }
             .clipped() // [视觉设计] 确保内容不会溢出窗口边界。
             // .background(Color(nsColor: .darkGray)) // Removed: Replaced by custom background layer
@@ -578,22 +589,43 @@ struct ImageView: View {
                                             dragStartPositions[id] = CGPoint(x: img.x, y: img.y)
                                         }
                                     }
+                                    
+                                    // [Smart Guides] 拖拽开始时构建参考线缓存
+                                    if appState.snapEnabled {
+                                        let guides = appState.buildSnapGuides(draggedIds: appState.selectedImageIds)
+                                        appState.snapXGuides = guides.xGuides
+                                        appState.snapYGuides = guides.yGuides
+                                    }
                                 }
                                 
                                 // 2. 更新全局拖拽偏移 (除以 canvasScale 以适应缩放)
                                 // 注意：value.translation 是屏幕像素 (Canvas Space)，需要转换为世界坐标增量。
-                                appState.currentDragOffset = CGSize(
+                                let rawOffset = CGSize(
                                     width: value.translation.width / appState.canvasScale,
                                     height: value.translation.height / appState.canvasScale
                                 )
+                                
+                                // [Smart Guides] 应用吸附修正 / Apply snap correction
+                                if appState.snapEnabled && !appState.snapXGuides.isEmpty {
+                                    let snapResult = appState.performSnap(
+                                        draggedIds: appState.selectedImageIds,
+                                        currentOffset: rawOffset,
+                                        xGuides: appState.snapXGuides,
+                                        yGuides: appState.snapYGuides,
+                                        canvasScale: appState.canvasScale
+                                    )
+                                    appState.currentDragOffset = snapResult.correctedOffset
+                                    appState.activeSnapLines = snapResult.snapLines
+                                } else {
+                                    appState.currentDragOffset = rawOffset
+                                    appState.activeSnapLines = []
+                                }
                             }
                             .onEnded { value in
                                 // 3. 提交移动
                                 // 将偏移量应用到所有选中的图片
-                                let finalOffset = CGSize(
-                                    width: value.translation.width / appState.canvasScale,
-                                    height: value.translation.height / appState.canvasScale
-                                )
+                                // [Smart Guides] 使用带吸附修正的偏移量 / Use snap-corrected offset
+                                let finalOffset = appState.currentDragOffset
                                 
                                 // [撤销/重做] 构建批量移动记录
                                 var moveChanges: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)] = []
@@ -626,6 +658,11 @@ struct ImageView: View {
                                 // 4. 重置状态
                                 appState.currentDragOffset = .zero
                                 dragStartPositions.removeAll()
+                                
+                                // [Smart Guides] 清除辅助线和缓存
+                                appState.activeSnapLines = []
+                                appState.snapXGuides = []
+                                appState.snapYGuides = []
                                 
                                 // [画布扩展] 拖拽结束后检查是否需要扩展画板边界
                                 appState.updateBoardBoundsIfNeeded()
@@ -768,6 +805,15 @@ struct ImageView: View {
                     
                     Button(LocalizedStringKey("Copy Board to Clipboard")) {
                         appState.copyBoardToClipboard()
+                    }
+                    
+                    Divider()
+                    
+                    // [Smart Guides] 智能对齐开关
+                    Button(appState.snapEnabled
+                           ? LocalizedStringKey("✓ Smart Guides (On)")
+                           : LocalizedStringKey("Smart Guides (Off)")) {
+                        appState.snapEnabled.toggle()
                     }
                 }
         }
@@ -1491,6 +1537,52 @@ struct GroupSettingsSheet: View {
                 colorHex = String(group.colorHex.prefix(7))
                 opacity = Double(group.opacity)
                 fontSize = Double(group.fontSize)
+            }
+        }
+    }
+}
+
+// MARK: - Smart Guides Overlay
+/// [智能对齐] 辅助线绘制覆盖层 - 使用原生 SwiftUI Canvas 绘制
+struct SmartGuidesOverlay: View {
+    var snapLines: [SnapLine]
+    var canvasOffset: CGSize
+    var canvasScale: CGFloat
+    
+    var body: some View {
+        GeometryReader { geometry in
+            Canvas { context, size in
+                let centerX = size.width / 2
+                let centerY = size.height / 2
+                
+                for line in snapLines {
+                    var path = Path()
+                    
+                    switch line.axis {
+                    case .x:
+                        // 垂直辅助线：世界坐标 → 屏幕坐标
+                        let screenX = line.value * canvasScale + canvasOffset.width * canvasScale + centerX
+                        let screenStartY = line.start * canvasScale + canvasOffset.height * canvasScale + centerY
+                        let screenEndY = line.end * canvasScale + canvasOffset.height * canvasScale + centerY
+                        path.move(to: CGPoint(x: screenX, y: screenStartY))
+                        path.addLine(to: CGPoint(x: screenX, y: screenEndY))
+                        
+                    case .y:
+                        // 水平辅助线：世界坐标 → 屏幕坐标
+                        let screenY = line.value * canvasScale + canvasOffset.height * canvasScale + centerY
+                        let screenStartX = line.start * canvasScale + canvasOffset.width * canvasScale + centerX
+                        let screenEndX = line.end * canvasScale + canvasOffset.width * canvasScale + centerX
+                        path.move(to: CGPoint(x: screenStartX, y: screenY))
+                        path.addLine(to: CGPoint(x: screenEndX, y: screenY))
+                    }
+                    
+                    // 亮蓝色虚线辅助线 / Bright cyan dashed guide line
+                    context.stroke(
+                        path,
+                        with: .color(Color(red: 0, green: 0.73, blue: 1.0, opacity: 0.8)),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                    )
+                }
             }
         }
     }

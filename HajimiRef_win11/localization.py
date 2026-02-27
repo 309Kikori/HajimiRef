@@ -60,7 +60,11 @@ LANGUAGES = {
         "group_name": "Group Name",
         "group_color": "Color",
         "font_size": "Font Size",
-        "opacity": "Opacity"
+        "opacity": "Opacity",
+        # 智能对齐 / Smart Guides
+        "smart_guides": "Smart Guides",
+        "smart_guides_on": "✓ Smart Guides (On)",
+        "smart_guides_off": "Smart Guides (Off)"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -119,6 +123,10 @@ LANGUAGES = {
         "group_name": "组名称",
         "group_color": "颜色",
         "font_size": "字体大小",
-        "opacity": "透明度"
+        "opacity": "透明度",
+        # 智能对齐 / Smart Guides
+        "smart_guides": "智能对齐",
+        "smart_guides_on": "✓ 智能对齐（已开启）",
+        "smart_guides_off": "智能对齐（已关闭）"
     }
 }

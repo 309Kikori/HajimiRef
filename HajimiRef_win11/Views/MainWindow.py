@@ -237,6 +237,10 @@ class MainWindow(QMainWindow):
         menu.addAction(tr("export_to_clipboard"), self.export_board_to_clipboard)
         menu.addSeparator()
         menu.addAction(tr("reset_board"), self.reset_board_to_fit_images)
+        menu.addSeparator()
+        # 智能对齐开关 / Smart Guides toggle
+        snap_label = tr("smart_guides_on") if self.view._snap_enabled else tr("smart_guides_off")
+        menu.addAction(snap_label, self.toggle_snap_guides)
         menu.exec(self.view.mapToGlobal(pos))
 
     def organize_items(self, items):
@@ -852,6 +856,12 @@ class MainWindow(QMainWindow):
         """
         self.view.resetBoardToFitImages()
     
+    def toggle_snap_guides(self):
+        """
+        切换智能对齐开关 / Toggle smart guides on/off
+        """
+        self.view._snap_enabled = not self.view._snap_enabled
+
     def update_auto_reset_timer(self):
         """
         更新自动重置画板定时器 / Update auto reset board timer

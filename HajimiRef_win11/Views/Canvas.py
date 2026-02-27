@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QGraphicsView, QGraphicsPixmapItem, QGraphicsItem
                                QLineEdit, QSpinBox, QSlider, QPushButton, QColorDialog, QInputDialog)
 from PySide6.QtCore import Qt, QByteArray, QBuffer, QPointF, QRectF, QMimeData, QLineF, QTimer
 from PySide6.QtGui import QPixmap, QImage, QPainter, QCursor, QColor, QPen, QDragEnterEvent, QDropEvent, QMouseEvent, QBrush, QFont, QPainterPath
+import bisect
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from Config import Config, tr
 
@@ -623,6 +624,16 @@ class RefItem(QGraphicsPixmapItem):
                 if isinstance(item, RefItem):
                     item._undo_start_pos = QPointF(item.pos())
                     item._undo_start_scale = item.scale()
+            
+            # [Smart Guides] 拖拽开始时缓存参考线 / Cache guide lines at drag start
+            view = self.scene().views()[0] if self.scene().views() else None
+            if view and hasattr(view, '_snap_enabled') and view._snap_enabled:
+                dragged_ids = set()
+                for it in selected_items:
+                    if isinstance(it, RefItem):
+                        dragged_ids.add(id(it))
+                view._buildSnapGuides(dragged_ids)
+            
             super().mousePressEvent(event)
         else:
             super().mousePressEvent(event)
@@ -653,12 +664,27 @@ class RefItem(QGraphicsPixmapItem):
             
             event.accept()
         else:
+            # [Smart Guides] 吸附检测 / Snap detection during drag
             super().mouseMoveEvent(event)
+            
+            if self._is_dragging:
+                view = self.scene().views()[0] if self.scene().views() else None
+                if view and hasattr(view, '_snap_enabled') and view._snap_enabled:
+                    view._performSnap(self)
 
     def mouseReleaseEvent(self, event):
         """
         处理鼠标释放事件，结束调整大小 / Handle mouse release, finish resizing
         """
+        # [Smart Guides] 清除辅助线 / Clear guide lines on release
+        if self._is_dragging or self._is_resizing:
+            view = self.scene().views()[0] if self.scene().views() else None
+            if view and hasattr(view, '_active_snap_lines'):
+                view._active_snap_lines = []
+                view._snap_x_guides = []
+                view._snap_y_guides = []
+                view.viewport().update()
+        
         if self._is_resizing:
             self._is_resizing = False
             self._resize_corner = None
@@ -814,6 +840,13 @@ class RefView(QGraphicsView):
         self._pan_start = QPointF()
         self._space_pressed = False
         
+        # [Smart Guides] 智能对齐状态 / Smart alignment state
+        self._snap_enabled = True
+        self._snap_threshold = 5.0  # 屏幕像素吸附阈值 / Screen pixel snap threshold
+        self._snap_x_guides = []   # [(value, item_id)] 排序后的 X 方向参考线
+        self._snap_y_guides = []   # [(value, item_id)] 排序后的 Y 方向参考线
+        self._active_snap_lines = []  # 当前活跃的辅助线 [(axis, value, start, end)]
+        
         # 画板边界状态（只扩展不收缩）/ Board bounds state (expand only, never shrink)
         # 初始画板边界以原点为中心 / Initial board bounds centered at origin
         half_w = Config.initial_board_width / 2
@@ -862,6 +895,189 @@ class RefView(QGraphicsView):
                     self.parent().load_image_file(url.toLocalFile(), pos.x() + offset, pos.y() + offset)
                     offset += 20
             event.acceptProposedAction()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # [Smart Guides] 智能对齐核心算法
+    # ─────────────────────────────────────────────────────────────────────
+    def _buildSnapGuides(self, dragged_ids):
+        """
+        缓存所有非拖拽物体的参考线（拖拽开始时调用一次）
+        Build snap guide cache from all non-dragged items (called once at drag start).
+        每个 RefItem 提取 6 条参考线: left, right, centerX, top, bottom, centerY
+        """
+        x_guides = []  # [(value, item_id)]
+        y_guides = []  # [(value, item_id)]
+        
+        for item in self.scene().items():
+            if not isinstance(item, RefItem):
+                continue
+            if id(item) in dragged_ids:
+                continue
+            
+            r = item.sceneBoundingRect()
+            iid = id(item)
+            x_guides.append((r.left(), iid))
+            x_guides.append((r.right(), iid))
+            x_guides.append((r.center().x(), iid))
+            y_guides.append((r.top(), iid))
+            y_guides.append((r.bottom(), iid))
+            y_guides.append((r.center().y(), iid))
+        
+        # 排序以便二分查找 / Sort for binary search
+        x_guides.sort(key=lambda g: g[0])
+        y_guides.sort(key=lambda g: g[0])
+        self._snap_x_guides = x_guides
+        self._snap_y_guides = y_guides
+
+    def _findNearestGuide(self, guides, value, threshold):
+        """
+        二分查找最近的参考线，返回 (guide_value, distance) 或 None
+        Binary search for the nearest guide within threshold.
+        """
+        if not guides:
+            return None
+        
+        values = [g[0] for g in guides]
+        idx = bisect.bisect_left(values, value)
+        
+        best = None
+        best_dist = threshold + 1
+        
+        # 检查 idx-1, idx 两个候选 / Check candidates at idx-1 and idx
+        for i in (idx - 1, idx):
+            if 0 <= i < len(values):
+                dist = abs(values[i] - value)
+                if dist < best_dist:
+                    best_dist = dist
+                    best = values[i]
+        
+        if best is not None and best_dist <= threshold:
+            return (best, best_dist)
+        return None
+
+    def _performSnap(self, dragged_item):
+        """
+        对所有选中项执行吸附检测和位移修正 / Perform snap detection for all selected items.
+        """
+        # 计算吸附阈值（屏幕像素 → 世界坐标）/ Threshold: screen px -> world coords
+        view_scale = self.transform().m11()
+        if view_scale < 0.001:
+            view_scale = 1.0
+        threshold = self._snap_threshold / view_scale
+        
+        # 计算所有选中项的联合边界 / Compute union bounds of all selected items
+        selected = [it for it in self.scene().selectedItems() if isinstance(it, RefItem)]
+        if not selected:
+            return
+        
+        union = QRectF()
+        for it in selected:
+            union = union.united(it.sceneBoundingRect())
+        
+        # 被拖拽物体的 5 条关键线 / 5 key lines of dragged bounding box
+        drag_x_vals = [union.left(), union.center().x(), union.right()]
+        drag_y_vals = [union.top(), union.center().y(), union.bottom()]
+        
+        # 寻找 X 方向最近吸附 / Find nearest X snap
+        best_snap_x = None  # (snap_to_value, drag_value, distance)
+        for dv in drag_x_vals:
+            result = self._findNearestGuide(self._snap_x_guides, dv, threshold)
+            if result:
+                guide_val, dist = result
+                if best_snap_x is None or dist < best_snap_x[2]:
+                    best_snap_x = (guide_val, dv, dist)
+        
+        # 寻找 Y 方向最近吸附 / Find nearest Y snap
+        best_snap_y = None
+        for dv in drag_y_vals:
+            result = self._findNearestGuide(self._snap_y_guides, dv, threshold)
+            if result:
+                guide_val, dist = result
+                if best_snap_y is None or dist < best_snap_y[2]:
+                    best_snap_y = (guide_val, dv, dist)
+        
+        # 计算修正偏移 / Calculate correction offset
+        dx = 0.0
+        dy = 0.0
+        new_snap_lines = []
+        
+        if best_snap_x:
+            dx = best_snap_x[0] - best_snap_x[1]  # guide_value - drag_value
+            # 辅助线纵向范围 / Vertical extent of guide line
+            line_top = min(union.top(), self._getGuideExtentMin('y', best_snap_x[0])) - 20 / view_scale
+            line_bottom = max(union.bottom(), self._getGuideExtentMax('y', best_snap_x[0])) + 20 / view_scale
+            new_snap_lines.append(('x', best_snap_x[0], line_top, line_bottom))
+        
+        if best_snap_y:
+            dy = best_snap_y[0] - best_snap_y[1]
+            line_left = min(union.left(), self._getGuideExtentMin('x', best_snap_y[0])) - 20 / view_scale
+            line_right = max(union.right(), self._getGuideExtentMax('x', best_snap_y[0])) + 20 / view_scale
+            new_snap_lines.append(('y', best_snap_y[0], line_left, line_right))
+        
+        # 应用修正偏移到所有选中项 / Apply correction to all selected items
+        if abs(dx) > 0.001 or abs(dy) > 0.001:
+            for it in selected:
+                it.moveBy(dx, dy)
+        
+        # 更新活跃辅助线并触发重绘 / Update active lines and trigger repaint
+        self._active_snap_lines = new_snap_lines
+        self.viewport().update()
+
+    def _getGuideExtentMin(self, axis, snap_value):
+        """
+        获取对齐到指定值的所有参考物体在另一轴的最小值
+        Get min extent of all reference items aligned to snap_value on the other axis.
+        """
+        min_val = float('inf')
+        for item in self.scene().items():
+            if not isinstance(item, RefItem):
+                continue
+            r = item.sceneBoundingRect()
+            if axis == 'y':  # snap_value 是 X，找 Y 的范围
+                if abs(r.left() - snap_value) < 1 or abs(r.right() - snap_value) < 1 or abs(r.center().x() - snap_value) < 1:
+                    min_val = min(min_val, r.top())
+            else:  # snap_value 是 Y，找 X 的范围
+                if abs(r.top() - snap_value) < 1 or abs(r.bottom() - snap_value) < 1 or abs(r.center().y() - snap_value) < 1:
+                    min_val = min(min_val, r.left())
+        return min_val if min_val != float('inf') else 0
+
+    def _getGuideExtentMax(self, axis, snap_value):
+        """
+        获取对齐到指定值的所有参考物体在另一轴的最大值
+        Get max extent of all reference items aligned to snap_value on the other axis.
+        """
+        max_val = float('-inf')
+        for item in self.scene().items():
+            if not isinstance(item, RefItem):
+                continue
+            r = item.sceneBoundingRect()
+            if axis == 'y':
+                if abs(r.left() - snap_value) < 1 or abs(r.right() - snap_value) < 1 or abs(r.center().x() - snap_value) < 1:
+                    max_val = max(max_val, r.bottom())
+            else:
+                if abs(r.top() - snap_value) < 1 or abs(r.bottom() - snap_value) < 1 or abs(r.center().y() - snap_value) < 1:
+                    max_val = max(max_val, r.right())
+        return max_val if max_val != float('-inf') else 0
+
+    def drawForeground(self, painter, rect):
+        """
+        绘制智能对齐辅助线 / Draw smart alignment guide lines
+        """
+        if not self._active_snap_lines:
+            return
+        
+        pen = QPen(QColor(0, 187, 255, 200))  # 亮蓝色辅助线 / Bright cyan guide line
+        pen.setWidthF(1.0)
+        pen.setCosmetic(True)  # 恒定屏幕像素宽度 / Constant screen pixel width
+        pen.setStyle(Qt.DashLine)
+        painter.setPen(pen)
+        
+        for snap_line in self._active_snap_lines:
+            axis, value, start, end = snap_line
+            if axis == 'x':  # 垂直线 / Vertical line
+                painter.drawLine(QPointF(value, start), QPointF(value, end))
+            else:  # 水平线 / Horizontal line
+                painter.drawLine(QPointF(start, value), QPointF(end, value))
 
     def drawBackground(self, painter, rect):
         """

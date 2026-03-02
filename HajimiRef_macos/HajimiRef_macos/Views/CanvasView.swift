@@ -182,7 +182,9 @@ struct WindowAccessor: NSViewRepresentable {
                 let zoomDelta = event.deltaY * 0.005
                 let zoomFactor = 1.0 + zoomDelta
                 let newScale = appState.canvasScale * zoomFactor
-                appState.canvasScale = min(max(newScale, 0.1), 10.0)
+                // [缩放范围] 放宽限制，与 win11 行为对齐（Qt 无显式限制）
+                // 但保留安全范围防止极端值导致渲染问题
+                appState.canvasScale = min(max(newScale, 0.02), 50.0)
             }
         }
         
@@ -190,7 +192,7 @@ struct WindowAccessor: NSViewRepresentable {
         private func handleMagnify(_ event: NSEvent) {
             let zoomFactor = 1.0 + event.magnification
             let newScale = appState.canvasScale * zoomFactor
-            appState.canvasScale = min(max(newScale, 0.1), 10.0)
+            appState.canvasScale = min(max(newScale, 0.02), 50.0)
         }
     }
 }
@@ -317,8 +319,17 @@ struct CanvasView: View {
             // .background(Color(nsColor: .darkGray)) // Removed: Replaced by custom background layer
             // Attach Window Accessor to background to capture window events
             .background(WindowAccessor())
-            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
-                loadImages(from: providers)
+            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers, location in
+                // [坐标转换] 将屏幕 Drop 位置转换为世界坐标
+                // 逆变换公式（与 selectImages 保持一致）：
+                // Screen = Center + (World + Offset - Center) * Scale
+                // World  = (Screen - Center) / Scale - Offset + Center
+                let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                let scale = appState.canvasScale
+                let offset = appState.canvasOffset
+                let worldX = (location.x - center.x) / scale - offset.width + center.x
+                let worldY = (location.y - center.y) / scale - offset.height + center.y
+                loadImages(from: providers, at: CGPoint(x: worldX, y: worldY))
                 return true
             }
             // [交互优化] 定义全局坐标空间
@@ -445,13 +456,13 @@ struct CanvasView: View {
         appState.selectedImageIds = newSelection
     }
     
-    private func loadImages(from providers: [NSItemProvider]) {
+    private func loadImages(from providers: [NSItemProvider], at worldPosition: CGPoint = .zero) {
         for provider in providers {
             if provider.canLoadObject(ofClass: URL.self) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     if let url = url {
                         DispatchQueue.main.async {
-                            appState.addImage(from: url)
+                            appState.addImage(from: url, at: worldPosition)
                         }
                     }
                 }
@@ -462,7 +473,7 @@ struct CanvasView: View {
                        let bitmap = NSBitmapImageRep(data: tiff),
                        let data = bitmap.representation(using: .png, properties: [:]) {
                         DispatchQueue.main.async {
-                            appState.addImage(data: data)
+                            appState.addImage(data: data, at: worldPosition)
                         }
                     }
                 }
@@ -625,6 +636,10 @@ struct ImageView: View {
                                         appState.activeSnapLines = []
                                     }
                                 }
+
+                                // [画布扩展] 拖拽过程中实时扩展画板边界
+                                // 与 win11 行为对齐：win11 的 drawBackground 每帧调用 _updateBoardBounds
+                                appState.updateBoardBoundsIfNeeded()
                             }
                             .onEnded { value in
                                 // 3. 提交移动
@@ -1042,14 +1057,15 @@ struct ActiveAreaBackground: View {
         Canvas { context, size in
             // 使用画板边界（固定范围，只扩展不收缩）
             let worldBounds = appState.boardBounds
-            
+
             // 将世界坐标转换为屏幕坐标
-            // 屏幕坐标 = (世界坐标 * scale) + offset + center
+            // 图片层变换链: .offset(canvasOffset).scaleEffect(canvasScale)
+            // 正向变换: Screen = Center + (World + Offset - Center) * Scale
             let centerX = size.width / 2
             let centerY = size.height / 2
-            
-            let screenX = worldBounds.minX * canvasScale + canvasOffset.width * canvasScale + centerX
-            let screenY = worldBounds.minY * canvasScale + canvasOffset.height * canvasScale + centerY
+
+            let screenX = centerX + (worldBounds.minX + canvasOffset.width - centerX) * canvasScale
+            let screenY = centerY + (worldBounds.minY + canvasOffset.height - centerY) * canvasScale
             let screenWidth = worldBounds.width * canvasScale
             let screenHeight = worldBounds.height * canvasScale
             
@@ -1078,46 +1094,50 @@ struct OptimizedGridBackground: View {
         Canvas { context, size in
             // 使用画板边界（固定范围，只扩展不收缩）
             let worldBounds = appState.boardBounds
-            
+
             // 将世界坐标转换为屏幕坐标
+            // 正向变换: Screen = Center + (World + Offset - Center) * Scale
             let centerX = size.width / 2
             let centerY = size.height / 2
-            
-            let screenMinX = worldBounds.minX * scale + offset.width * scale + centerX
-            let screenMinY = worldBounds.minY * scale + offset.height * scale + centerY
-            let screenMaxX = worldBounds.maxX * scale + offset.width * scale + centerX
-            let screenMaxY = worldBounds.maxY * scale + offset.height * scale + centerY
-            
+
+            let screenMinX = centerX + (worldBounds.minX + offset.width - centerX) * scale
+            let screenMinY = centerY + (worldBounds.minY + offset.height - centerY) * scale
+            let screenMaxX = centerX + (worldBounds.maxX + offset.width - centerX) * scale
+            let screenMaxY = centerY + (worldBounds.maxY + offset.height - centerY) * scale
+
             // 裁剪到可见区域
             let visibleMinX = max(0, screenMinX)
             let visibleMinY = max(0, screenMinY)
             let visibleMaxX = min(size.width, screenMaxX)
             let visibleMaxY = min(size.height, screenMaxY)
-            
+
             // 如果画板区域不在可见范围内，不绘制
             guard visibleMinX < visibleMaxX && visibleMinY < visibleMaxY else {
                 return
             }
-            
+
             let baseSpacing: CGFloat = 20.0
             var effectiveSpacing = baseSpacing
-            
+
             // LOD (Level of Detail): Increase spacing when zoomed out
             while (effectiveSpacing * scale) < 15 {
                 effectiveSpacing *= 2
             }
-            
+
             let gridStep = effectiveSpacing * scale
             let dotRadius = 1.0
-            
-            let offsetX = offset.width * scale
-            let offsetY = offset.height * scale
-            
+
+            // 网格点需要与世界坐标对齐：世界原点 (0,0) 经正向变换后的屏幕位置
+            // Screen = Center + (World + Offset - Center) * Scale
+            // 世界原点在屏幕上: originScreenX = centerX + (0 + offset.width - centerX) * scale
+            let originScreenX = centerX + (offset.width - centerX) * scale
+            let originScreenY = centerY + (offset.height - centerY) * scale
+
             // Calculate start positions to align grid with world space
-            var startX = offsetX.truncatingRemainder(dividingBy: gridStep)
+            var startX = originScreenX.truncatingRemainder(dividingBy: gridStep)
             if startX < 0 { startX += gridStep }
-            
-            var startY = offsetY.truncatingRemainder(dividingBy: gridStep)
+
+            var startY = originScreenY.truncatingRemainder(dividingBy: gridStep)
             if startY < 0 { startY += gridStep }
             
             // 调整起始点到可见画板区域内
@@ -1593,25 +1613,27 @@ struct SnapLineShape: Shape {
     
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        
+
         switch line.axis {
         case .x:
             // 垂直辅助线：世界坐标 → 屏幕坐标
-            let screenX = line.value * canvasScale + canvasOffset.width * canvasScale + centerX
-            let screenStartY = line.start * canvasScale + canvasOffset.height * canvasScale + centerY
-            let screenEndY = line.end * canvasScale + canvasOffset.height * canvasScale + centerY
+            // 正向变换: Screen = Center + (World + Offset - Center) * Scale
+            let screenX = centerX + (line.value + canvasOffset.width - centerX) * canvasScale
+            let screenStartY = centerY + (line.start + canvasOffset.height - centerY) * canvasScale
+            let screenEndY = centerY + (line.end + canvasOffset.height - centerY) * canvasScale
             path.move(to: CGPoint(x: screenX, y: screenStartY))
             path.addLine(to: CGPoint(x: screenX, y: screenEndY))
-            
+
         case .y:
             // 水平辅助线：世界坐标 → 屏幕坐标
-            let screenY = line.value * canvasScale + canvasOffset.height * canvasScale + centerY
-            let screenStartX = line.start * canvasScale + canvasOffset.width * canvasScale + centerX
-            let screenEndX = line.end * canvasScale + canvasOffset.width * canvasScale + centerX
+            // 正向变换: Screen = Center + (World + Offset - Center) * Scale
+            let screenY = centerY + (line.value + canvasOffset.height - centerY) * canvasScale
+            let screenStartX = centerX + (line.start + canvasOffset.width - centerX) * canvasScale
+            let screenEndX = centerX + (line.end + canvasOffset.width - centerX) * canvasScale
             path.move(to: CGPoint(x: screenStartX, y: screenY))
             path.addLine(to: CGPoint(x: screenEndX, y: screenY))
         }
-        
+
         return path
     }
 }

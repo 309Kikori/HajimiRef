@@ -19,8 +19,14 @@ class AppState {
     var undoManager = CanvasUndoManager()
     
     // [画板状态] 画板边界（固定初始范围，只扩展不收缩）
-    // 初始画板大小：以原点为中心，宽高各1200
-    var boardBounds: CGRect = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+    // 初始画板大小：以原点为中心，与 win11 版对齐 (2000×1500)
+    static let initialBoardWidth: CGFloat = 2000
+    static let initialBoardHeight: CGFloat = 1500
+    static let activeAreaPadding: CGFloat = 200
+    var boardBounds: CGRect = CGRect(
+        x: -initialBoardWidth / 2, y: -initialBoardHeight / 2,
+        width: initialBoardWidth, height: initialBoardHeight
+    )
     
     // [自动重置画板] 定时器相关
     private var autoResetTimer: Timer?
@@ -426,7 +432,10 @@ class AppState {
         canvasOffset = .zero
         canvasScale = 1.0
         // 重置画板边界为初始大小
-        boardBounds = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+        boardBounds = CGRect(
+            x: -AppState.initialBoardWidth / 2, y: -AppState.initialBoardHeight / 2,
+            width: AppState.initialBoardWidth, height: AppState.initialBoardHeight
+        )
     }
     
     // MARK: - Undo/Redo (撤销/重做)
@@ -462,21 +471,28 @@ class AppState {
         )
     }
     
-    /// 检查并扩展画板边界以包含所有图片
+    /// 检查并扩展画板边界以包含所有图片（含拖拽中的临时偏移）
+    /// 与 win11 drawBackground 中的 _updateBoardBounds 行为对齐：
+    /// win11 每帧都调用此方法，图片位置已实时更新；
+    /// macOS 拖拽时位置暂存在 currentDragOffset 中，需要额外计算。
     func updateBoardBoundsIfNeeded() {
         for img in images {
             let w = (img.nsImage?.size.width ?? 100) * img.scale
             let h = (img.nsImage?.size.height ?? 100) * img.scale
-            
-            // 计算图片边界（带边距）
-            let padding: CGFloat = 100
+
+            // 计算有效位置（考虑拖拽中的临时偏移）
+            let isDragging = selectedImageIds.contains(img.id)
+            let effectiveX = isDragging ? img.x + currentDragOffset.width : img.x
+            let effectiveY = isDragging ? img.y + currentDragOffset.height : img.y
+
+            let padding: CGFloat = AppState.activeAreaPadding
             let imgRect = CGRect(
-                x: img.x - w/2 - padding,
-                y: img.y - h/2 - padding,
+                x: effectiveX - w/2 - padding,
+                y: effectiveY - h/2 - padding,
                 width: w + padding * 2,
                 height: h + padding * 2
             )
-            
+
             // 只有当图片超出画板边界时才扩展
             if imgRect.minX < boardBounds.minX ||
                imgRect.minY < boardBounds.minY ||
@@ -487,12 +503,56 @@ class AppState {
         }
     }
     
-    /// 重置画板边界为包含所有图片的最小范围
+    /// 重置画板边界为包含所有图片的最小范围（与 win11 resetBoardToFitImages 对齐）
     func resetBoardBounds() {
-        // 先重置为初始大小
-        boardBounds = CGRect(x: -600, y: -600, width: 1200, height: 1200)
-        // 然后扩展以包含所有图片
-        updateBoardBoundsIfNeeded()
+        guard !images.isEmpty else {
+            // 没有图片时重置为默认大小
+            boardBounds = CGRect(
+                x: -AppState.initialBoardWidth / 2, y: -AppState.initialBoardHeight / 2,
+                width: AppState.initialBoardWidth, height: AppState.initialBoardHeight
+            )
+            return
+        }
+        
+        // 计算所有图片的边界框
+        var minX: CGFloat = .greatestFiniteMagnitude
+        var minY: CGFloat = .greatestFiniteMagnitude
+        var maxX: CGFloat = -.greatestFiniteMagnitude
+        var maxY: CGFloat = -.greatestFiniteMagnitude
+        
+        for img in images {
+            let w = (img.nsImage?.size.width ?? 100) * img.scale
+            let h = (img.nsImage?.size.height ?? 100) * img.scale
+            let left = img.x - w/2
+            let right = img.x + w/2
+            let top = img.y - h/2
+            let bottom = img.y + h/2
+            if left < minX { minX = left }
+            if right > maxX { maxX = right }
+            if top < minY { minY = top }
+            if bottom > maxY { maxY = bottom }
+        }
+        
+        // 添加边距
+        let padding = AppState.activeAreaPadding
+        minX -= padding; minY -= padding
+        maxX += padding; maxY += padding
+        
+        // 确保最小尺寸不小于初始大小（与 win11 resetBoardToFitImages 一致）
+        let rawWidth = maxX - minX
+        let rawHeight = maxY - minY
+        let finalWidth = max(rawWidth, AppState.initialBoardWidth)
+        let finalHeight = max(rawHeight, AppState.initialBoardHeight)
+        
+        // 以图片区域中心为中心创建新的画板边界
+        let centerX = (minX + maxX) / 2
+        let centerY = (minY + maxY) / 2
+        boardBounds = CGRect(
+            x: centerX - finalWidth / 2,
+            y: centerY - finalHeight / 2,
+            width: finalWidth,
+            height: finalHeight
+        )
     }
     
     // [视觉设计] 内容居中
@@ -536,13 +596,16 @@ class AppState {
         canvasOffset = CGSize(width: -centerX, height: -centerY)
         
         // 调整缩放以适应
-        // 我们添加一些填充 (100pt)，这样图像就不会接触到窗口边缘。
-        let targetScaleX = 1000.0 / (contentWidth + 100)
-        let targetScaleY = 800.0 / (contentHeight + 100)
+        // 使用实际窗口尺寸（通过 NSApp 主窗口获取），避免硬编码。
+        // 回退值 1000×800 仅在获取窗口尺寸失败时使用。
+        let windowSize = NSApp.mainWindow?.contentView?.bounds.size ?? CGSize(width: 1000, height: 800)
+        let fitPadding: CGFloat = 100
+        let targetScaleX = windowSize.width / (contentWidth + fitPadding)
+        let targetScaleY = windowSize.height / (contentHeight + fitPadding)
         let fitScale = min(targetScaleX, targetScaleY)
-        
-        // 将缩放限制在合理范围内 (0.1x 到 2.0x) 以防止过度缩放。
-        canvasScale = min(max(fitScale, 0.1), 2.0)
+
+        // 将缩放限制在合理范围内，防止极端情况。
+        canvasScale = min(max(fitScale, 0.02), 5.0)
     }
     
     func compactMemory() {

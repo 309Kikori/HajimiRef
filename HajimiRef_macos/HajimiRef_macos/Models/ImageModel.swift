@@ -107,4 +107,10 @@ extension ImageEntity {
         }
         return nil
     }
+    
+    // ── 自适应色深：检测图像的原始位深信息 ──
+    // Adaptive color depth: detect original bit depth of the image
+    var colorDepthInfo: ImageColorDepthInfo {
+        return ColorDepthManagerMac.detectDepthFromBase64(self.data)
+    }
 }

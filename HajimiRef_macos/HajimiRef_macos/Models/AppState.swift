@@ -28,6 +28,17 @@ class AppState {
         width: initialBoardWidth, height: initialBoardHeight
     )
     
+    // [画板动画] 用于绘制的显示边界，通过插值动画平滑过渡到 boardBounds
+    var displayBoardBounds: CGRect = CGRect(
+        x: -initialBoardWidth / 2, y: -initialBoardHeight / 2,
+        width: initialBoardWidth, height: initialBoardHeight
+    )
+    private var boardBoundsAnimationTimer: Timer?
+    private static let boardAnimationDuration: Double = 0.25 // 动画时长（秒）
+    private var boardAnimationStartTime: Date?
+    private var boardAnimationStartBounds: CGRect?
+    private var boardAnimationTargetBounds: CGRect?
+    
     // [自动重置画板] 定时器相关
     private var autoResetTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -35,6 +46,13 @@ class AppState {
     // [交互状态] 临时拖拽偏移
     // 用于在拖拽过程中实时更新所有选中图片的位置，而不需要频繁提交到 images 数组。
     var currentDragOffset: CGSize = .zero
+    
+    // ── 自适应色深管理器 / Adaptive Color Depth Manager ──
+    var colorDepthManager = ColorDepthManagerMac(
+        mode: ColorDepthManagerMac.modeFromString(
+            UserDefaults.standard.string(forKey: "colorDepthMode") ?? "auto"
+        )
+    )
     
     // [交互状态] 多选缩放因子
     // 用于在调整大小时实时预览所有选中图片的缩放效果。
@@ -378,22 +396,36 @@ class AppState {
             return
         }
         
-        // 2. 尝试从标准图片格式粘贴（从外部复制的图片）
-        if let nsImage = NSImage(pasteboard: pasteboard),
-           let tiffData = nsImage.tiffRepresentation,
-           let bitmapRep = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-            addImage(data: pngData)
-            return
-        }
-        
-        // 3. 尝试从文件 URL 粘贴
+        // 2. 尝试从文件 URL 粘贴（Finder 复制文件时优先读取实际文件数据，而非 Finder 生成的图标缩略图）
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true,
             .urlReadingContentsConformToTypes: ["public.image"]
-        ]) as? [URL] {
+        ]) as? [URL], !urls.isEmpty {
             for url in urls {
                 addImage(from: url)
+            }
+            return
+        }
+        
+    // 3. 兜底：从标准图片格式粘贴（截图、其他应用复制的纯图片数据）
+        // ── 自适应色深：根据图像位深选择最佳编码格式 ──
+        if let nsImage = NSImage(pasteboard: pasteboard),
+           let tiffData = nsImage.tiffRepresentation,
+           let bitmapRep = NSBitmapImageRep(data: tiffData) {
+            let depthInfo = ColorDepthManagerMac.detectBitmapDepth(bitmapRep)
+            
+            // 高位深图像且非强制8bit模式：使用 TIFF 保留精度
+            if depthInfo.isHighBitDepth && colorDepthManager.mode != .force8bit {
+                if let tiffExportData = bitmapRep.representation(using: .tiff, properties: [:]) {
+                    addImage(data: tiffExportData)
+                    return
+                }
+            }
+            
+            // 标准 8bit 或强制 8bit：使用 PNG
+            if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                addImage(data: pngData)
+                return
             }
         }
     }
@@ -402,16 +434,33 @@ class AppState {
         // [撤销/重做] 记录删除图片操作
         if let index = images.firstIndex(where: { $0.id == id }) {
             let image = images[index]
-            undoManager.recordAction(.removeImage(image: image, index: index))
             
-            // 如果图片属于某个组，从组中移除 / If image belongs to a group, remove from group
+            // [BUG修复] 如果图片属于某个组且删除后组成员不足2个，需要将组解散信息一并记录进 removeImage action
+            // 不能调用 ungroupGroup()，否则会额外向 undo 栈压入一条 deleteGroup，导致双重记录
             if let groupId = image.groupId, let groupIndex = groups.firstIndex(where: { $0.id == groupId }) {
                 groups[groupIndex].memberIds.removeAll { $0 == id }
-                // 如果组只剩一个或零个成员，自动解散组
                 if groups[groupIndex].memberIds.count < 2 {
-                    ungroupGroup(groupId: groupId)
+                    // 直接内联解散组，不走 ungroupGroup（避免额外 undo 记录）
+                    let dissolvedGroup = groups[groupIndex]
+                    // 先记录 removeImage（含已更新的 image.groupId 状态）
+                    undoManager.recordAction(.removeImage(image: image, index: index))
+                    // 再记录 deleteGroup，两条记录对应两次独立的撤回步骤
+                    undoManager.recordAction(.deleteGroup(group: dissolvedGroup))
+                    // 清除剩余成员的 groupId
+                    for memberId in dissolvedGroup.memberIds {
+                        if let imgIndex = images.firstIndex(where: { $0.id == memberId }) {
+                            images[imgIndex].groupId = nil
+                        }
+                    }
+                    groups.remove(at: groupIndex)
+                    selectedGroupId = nil
+                    images.removeAll { $0.id == id }
+                    selectedImageIds.remove(id)
+                    return
                 }
             }
+            
+            undoManager.recordAction(.removeImage(image: image, index: index))
         }
         
         images.removeAll { $0.id == id }
@@ -419,9 +468,9 @@ class AppState {
     }
     
     func clearBoard() {
-        // [撤销/重做] 记录清空画板操作
+        // [撤销/重做] 记录清空画板操作（同时保存当前画布视角，以便撤回时恢复）
         if !images.isEmpty || !groups.isEmpty {
-            undoManager.recordAction(.clearBoard(images: images, groups: groups))
+            undoManager.recordAction(.clearBoard(images: images, groups: groups, canvasOffset: canvasOffset, canvasScale: canvasScale))
         }
         
         images.removeAll()
@@ -432,10 +481,14 @@ class AppState {
         canvasOffset = .zero
         canvasScale = 1.0
         // 重置画板边界为初始大小
-        boardBounds = CGRect(
+        let defaultBounds = CGRect(
             x: -AppState.initialBoardWidth / 2, y: -AppState.initialBoardHeight / 2,
             width: AppState.initialBoardWidth, height: AppState.initialBoardHeight
         )
+        boardBounds = defaultBounds
+        // 清空画板时直接跳到目标值（无需动画）
+        displayBoardBounds = defaultBounds
+        stopBoardBoundsAnimation()
     }
     
     // MARK: - Undo/Redo (撤销/重做)
@@ -463,12 +516,18 @@ class AppState {
         let newMaxX = max(boardBounds.maxX, rect.maxX)
         let newMaxY = max(boardBounds.maxY, rect.maxY)
         
-        boardBounds = CGRect(
+        let newBounds = CGRect(
             x: newMinX,
             y: newMinY,
             width: newMaxX - newMinX,
             height: newMaxY - newMinY
         )
+        
+        // 只有当边界确实发生了变化时才触发动画
+        if newBounds != boardBounds {
+            boardBounds = newBounds
+            animateDisplayBoardBounds(to: newBounds)
+        }
     }
     
     /// 检查并扩展画板边界以包含所有图片（含拖拽中的临时偏移）
@@ -507,10 +566,12 @@ class AppState {
     func resetBoardBounds() {
         guard !images.isEmpty else {
             // 没有图片时重置为默认大小
-            boardBounds = CGRect(
+            let defaultBounds = CGRect(
                 x: -AppState.initialBoardWidth / 2, y: -AppState.initialBoardHeight / 2,
                 width: AppState.initialBoardWidth, height: AppState.initialBoardHeight
             )
+            boardBounds = defaultBounds
+            animateDisplayBoardBounds(to: defaultBounds)
             return
         }
         
@@ -547,12 +608,75 @@ class AppState {
         // 以图片区域中心为中心创建新的画板边界
         let centerX = (minX + maxX) / 2
         let centerY = (minY + maxY) / 2
-        boardBounds = CGRect(
+        let newBounds = CGRect(
             x: centerX - finalWidth / 2,
             y: centerY - finalHeight / 2,
             width: finalWidth,
             height: finalHeight
         )
+        boardBounds = newBounds
+        animateDisplayBoardBounds(to: newBounds)
+    }
+    
+    // MARK: - Board Bounds Animation (画板边界动画)
+    
+    /// 启动 displayBoardBounds 向目标值的平滑过渡动画
+    private func animateDisplayBoardBounds(to target: CGRect) {
+        // 记录动画起始状态
+        boardAnimationStartBounds = displayBoardBounds
+        boardAnimationTargetBounds = target
+        boardAnimationStartTime = Date()
+        
+        // 如果定时器已存在则复用（动画被打断时从当前位置继续）
+        if boardBoundsAnimationTimer == nil {
+            boardBoundsAnimationTimer = Timer.scheduledTimer(
+                withTimeInterval: 1.0 / 60.0, // ~60fps
+                repeats: true
+            ) { [weak self] timer in
+                self?.tickBoardBoundsAnimation(timer)
+            }
+        }
+    }
+    
+    /// 每帧插值更新 displayBoardBounds（easeOut 缓动）
+    private func tickBoardBoundsAnimation(_ timer: Timer) {
+        guard let startTime = boardAnimationStartTime,
+              let startBounds = boardAnimationStartBounds,
+              let targetBounds = boardAnimationTargetBounds else {
+            stopBoardBoundsAnimation()
+            return
+        }
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        let duration = AppState.boardAnimationDuration
+        
+        if elapsed >= duration {
+            // 动画结束，精确设置到目标值
+            displayBoardBounds = targetBounds
+            stopBoardBoundsAnimation()
+            return
+        }
+        
+        // easeOut 缓动: t' = 1 - (1 - t)^3
+        let t = elapsed / duration
+        let easedT = 1.0 - pow(1.0 - t, 3)
+        
+        // 对 CGRect 四个分量分别插值
+        let x = startBounds.origin.x + (targetBounds.origin.x - startBounds.origin.x) * easedT
+        let y = startBounds.origin.y + (targetBounds.origin.y - startBounds.origin.y) * easedT
+        let w = startBounds.width + (targetBounds.width - startBounds.width) * easedT
+        let h = startBounds.height + (targetBounds.height - startBounds.height) * easedT
+        
+        displayBoardBounds = CGRect(x: x, y: y, width: w, height: h)
+    }
+    
+    /// 停止画板边界动画定时器
+    private func stopBoardBoundsAnimation() {
+        boardBoundsAnimationTimer?.invalidate()
+        boardBoundsAnimationTimer = nil
+        boardAnimationStartTime = nil
+        boardAnimationStartBounds = nil
+        boardAnimationTargetBounds = nil
     }
     
     // [视觉设计] 内容居中
@@ -843,15 +967,42 @@ class AppState {
             image.unlockFocus()
             
             // 保存图片到文件
+            // ── 自适应色深导出：检测画布上图像的最高位深 ──
             guard let tiffData = image.tiffRepresentation,
                   let bitmap = NSBitmapImageRep(data: tiffData) else {
                 showExportError()
                 return
             }
             
+            // 检测画布上所有图像的最高位深
+            var maxDepthInfo = ImageColorDepthInfo.standard
+            for img in images {
+                let info = img.colorDepthInfo
+                if info.bitsPerChannel > maxDepthInfo.bitsPerChannel {
+                    maxDepthInfo = info
+                }
+            }
+            
+            let fileExt = url.pathExtension.lowercased()
+            let exportBits = colorDepthManager.getExportBitsPerSample(for: maxDepthInfo, fileFormat: fileExt)
+            
             var imageData: Data?
-            if url.pathExtension.lowercased() == "png" {
-                imageData = bitmap.representation(using: .png, properties: [:])
+            if fileExt == "png" {
+                // 高位深 PNG 导出：使用 CGImage 直接写入以保留 16bit 精度
+                if exportBits > 8, let cgImage = bitmap.cgImage {
+                    let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)
+                    if let dest = dest {
+                        CGImageDestinationAddImage(dest, cgImage, nil)
+                        if CGImageDestinationFinalize(dest) {
+                            // 成功，跳过后续写入
+                            imageData = Data()  // 占位，标记已成功
+                        }
+                    }
+                }
+                // 标准 8bit PNG 或高位深写入失败时的回退
+                if imageData == nil {
+                    imageData = bitmap.representation(using: .png, properties: [:])
+                }
             } else {
                 imageData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
             }
@@ -1264,6 +1415,19 @@ class AppState {
             }
         }
         
+        // [撤销/重做] 记录智能排序前的原始位置，作为 batchMove 操作
+        // Record original positions before smart sort as a batchMove action
+        var moveChanges: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)] = []
+        for body in bodies {
+            let img = images[body.index]
+            let oldPos = CGPoint(x: img.x, y: img.y)
+            let newPos = CGPoint(x: body.x + offsetX, y: body.y + offsetY)
+            moveChanges.append((imageId: img.id, oldPosition: oldPos, newPosition: newPos))
+        }
+        if !moveChanges.isEmpty {
+            undoManager.recordAction(.batchMove(changes: moveChanges))
+        }
+        
         withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
             // 更新图片位置 / Update image positions
             for body in bodies {
@@ -1288,6 +1452,9 @@ class AppState {
         guard let index = images.firstIndex(where: { $0.id == imageId }),
               let nsImage = images[index].nsImage,
               let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        
+        // [撤销/重做] 保存旧的图片数据用于 undo / Save old data for undo
+        let oldData = images[index].data
         
         // 创建一个请求以生成前景主体的分割蒙版。
         // 这使用了针对 Apple Silicon 优化的机器学习模型。
@@ -1333,6 +1500,13 @@ class AppState {
                                     if let d = Data(base64Encoded: base64) {
                                         self.images[index]._cachedImage = NSImage(data: d)
                                     }
+                                    
+                                    // [撤销/重做] 记录去背景操作，支持 Cmd+Z 恢复原始图片
+                                    self.undoManager.recordAction(.replaceImageData(
+                                        imageId: imageId,
+                                        oldData: oldData,
+                                        newData: base64
+                                    ))
                                 }
                             }
                         }

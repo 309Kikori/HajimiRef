@@ -8,11 +8,30 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPalette, QColor, Qt, QIcon
 from PySide6.QtCore import QSize
 from Views.MainWindow import MainWindow
+from Config import Config
+from Models.ColorDepthManager import ColorDepthManager, ColorDepthMode
 
 if __name__ == "__main__":
     # 程序入口 / Program entry point
+    
+    # ── 自适应色深：必须在 QApplication 创建之前配置 OpenGL Surface Format ──
+    # Adaptive color depth: MUST configure OpenGL Surface Format BEFORE QApplication creation
+    Config.load()  # 先加载配置，获取色深模式 / Load config first to get color depth mode
+    
+    color_depth_mgr = ColorDepthManager(
+        ColorDepthManager.get_mode_from_string(Config.color_depth_mode)
+    )
+    # 亚克力模式需要 ≥ 8bit alpha 通道以支持 DWM 透明穿透
+    # Acrylic mode needs ≥ 8bit alpha for DWM transparent passthrough
+    surface_fmt = color_depth_mgr.configure_surface_format(need_alpha=Config.acrylic_enabled)
+    ColorDepthManager.apply_surface_format(surface_fmt)
+    
     app = QApplication(sys.argv)
     
+    # 将色深管理器挂载到 app 上，供全局访问 / Attach color depth manager to app for global access
+    app.color_depth_manager = color_depth_mgr
+    
+    # Set App Icon    
     # Set App Icon - 为不同尺寸添加图标，确保任务栏显示正常
     icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.png")
     if os.path.exists(icon_path):
@@ -30,7 +49,11 @@ if __name__ == "__main__":
     palette = app.palette()
     
     # --- 窗口和文本颜色 / Window and Text Colors ---
-    palette.setColor(QPalette.Window, QColor(53, 53, 53))       # 窗口背景色 (深灰) / Window background color (dark gray)
+    # 亚克力模式：QPalette.Window 使用与 QSS 一致的 alpha 值，
+    # 防止 palette 在未被 QSS 覆盖的边缘区域绘制不透明底色造成黑边
+    # 非亚克力模式：使用不透明底色
+    window_alpha = Config.bg_opacity if Config.acrylic_enabled else 255
+    palette.setColor(QPalette.Window, QColor(53, 53, 53, window_alpha))  # 窗口背景色 / Window background color
     palette.setColor(QPalette.WindowText, Qt.white)            # 窗口前景色 (文字) / Window foreground color (text)
     palette.setColor(QPalette.Base, QColor(25, 25, 25))         # 输入框等控件的背景色 (更深的灰色) / Background for input widgets (darker gray)
     palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53)) # 列表和表格的交替行颜色 / Alternate row color for lists/tables
@@ -55,16 +78,33 @@ if __name__ == "__main__":
     # 使用 QSS (Qt Style Sheets) 对特定控件进行更精细的样式控制 / Use QSS for fine-grained styling of specific widgets
     app.setStyleSheet("""
         QMenu {
-            background-color: #353535; /* 菜单背景颜色 (深灰) / Menu background color (dark gray) */
-            color: #E0E0E0;            /* 菜单文字颜色 (灰白色) / Menu text color (off-white) */
-            border: 1px solid #000;    /* 菜单边框 / Menu border */
+            background-color: #2d2d2d;
+            color: #E0E0E0;
+            border: 1px solid #404040;
+            border-radius: 6px;
+            padding: 4px 0px;
+        }
+        QMenu::item {
+            padding: 6px 28px 6px 20px;
+            border-radius: 4px;
+            margin: 2px 4px;
         }
         QMenu::item:selected {
-            background-color: #2a82da; /* 菜单项被选中时的背景颜色 (蓝色) / Background color for selected menu items (blue) */
-            color: #ffffff;            /* 菜单项被选中时的文字颜色 (白色) / Text color for selected menu items (white) */
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #404040;
+            margin: 4px 8px;
+        }
+        QMenuBar {
+            background: transparent;
         }
     """)
 
     window = MainWindow()
     window.show()
+    # 窗口显示后立即应用 Win11 特效（需要窗口句柄已创建）
+    window.apply_win11_effects()
     sys.exit(app.exec())

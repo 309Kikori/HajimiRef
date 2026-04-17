@@ -16,7 +16,7 @@ LANGUAGES = {
         "help": "Help",
         "about": "About",
         "exit": "Exit",
-        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Ctrl + Wheel: Scale Image\n- Delete: Remove Image\n- G: Group Selected Images",
+        "about_text": "SimpleRef (GPU)\nA GPU-accelerated reference image viewer.\n\nControls:\n- Right Click: Menu\n- Left Drag: Move Image\n- Middle Drag / Space + Left Drag: Pan Canvas\n- Wheel: Zoom Canvas\n- Delete: Remove Image\n- G: Group Selected Images",
         "error": "Error",
         "save_error": "Failed to save file: {}",
         "load_error": "Failed to load file: {}",
@@ -64,7 +64,39 @@ LANGUAGES = {
         # 智能对齐 / Smart Guides
         "smart_guides": "Smart Guides",
         "smart_guides_on": "✓ Smart Guides (On)",
-        "smart_guides_off": "Smart Guides (Off)"
+        "smart_guides_off": "Smart Guides (Off)",
+        # Win11 窗口特效 / Win11 window effects
+        "win11_effects": "Win11 Effects",
+        "window_opacity": "Background Opacity",
+        "acrylic_effect": "Acrylic Background",
+        "acrylic_tip": "Requires Windows 10 1809+. Restart may be needed.",
+        "effect_applied": "Win11 effect applied.",
+        "effect_removed": "Win11 effect removed.",
+        "effect_not_supported": "Current system does not support this effect.",
+        # 画板主题 / Canvas theme
+        "canvas_theme": "Canvas Theme",
+        "theme_dot_grid": "Dot Grid",
+        "theme_ue5_blueprint": "UE5 Blueprint",
+        "ue5_bg_color": "Blueprint Background",
+        "ue5_small_grid_color": "Small Grid Color",
+        "ue5_large_grid_color": "Large Grid Color",
+        "ue5_large_grid_multiplier": "Large Grid Interval",
+        "ue5_small_line_width": "Small Grid Line Width",
+        "ue5_large_line_width": "Large Grid Line Width",
+        "ue5_small_line_alpha": "Small Grid Opacity",
+        "ue5_large_line_alpha": "Large Grid Opacity",
+        "dot_size": "Dot Size",
+        # 色深模式 / Color Depth Mode
+        "color_depth": "Color Depth",
+        "color_depth_mode": "Color Depth Mode",
+        "color_depth_auto": "Auto (Adaptive)",
+        "color_depth_8bit": "8bit (Standard)",
+        "color_depth_10bit": "10bit (High Color)",
+        "color_depth_16bit": "16bit (Maximum)",
+        "color_depth_tip": "Auto mode: high-bit images render at high bit depth, low-bit images at 8bit. Restart required after change.",
+        "color_depth_restart": "Color depth mode changed. Please restart the application for it to take effect.",
+        # 汉堡菜单 / Hamburger menu
+        "menu_tooltip": "Menu"
     },
     "zh_cn": {
         "title": "SimpleRef (GPU 加速版)",
@@ -79,7 +111,7 @@ LANGUAGES = {
         "help": "帮助",
         "about": "关于",
         "exit": "退出",
-        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Ctrl + 滚轮: 缩放选中图片\n- Delete: 删除图片\n- G: 打组选中图片",
+        "about_text": "SimpleRef (GPU)\n一个基于 GPU 加速的参考图查看器。\n\n操作说明:\n- 右键: 菜单\n- 左键拖拽: 移动图片\n- 中键拖拽 / 空格+左键: 移动画布\n- 滚轮: 缩放画布\n- Delete: 删除图片\n- G: 打组选中图片",
         "error": "错误",
         "save_error": "保存文件失败: {}",
         "load_error": "读取文件失败: {}",
@@ -127,6 +159,38 @@ LANGUAGES = {
         # 智能对齐 / Smart Guides
         "smart_guides": "智能对齐",
         "smart_guides_on": "✓ 智能对齐（已开启）",
-        "smart_guides_off": "智能对齐（已关闭）"
+        "smart_guides_off": "智能对齐（已关闭）",
+        # Win11 窗口特效 / Win11 window effects
+        "win11_effects": "Win11 特效",
+        "window_opacity": "背景不透明度",
+        "acrylic_effect": "亚克力背景",
+        "acrylic_tip": "需要 Windows 10 1809 及以上版本。",
+        "effect_applied": "Win11 特效已应用。",
+        "effect_removed": "Win11 特效已移除。",
+        "effect_not_supported": "当前系统不支持此特效。",
+        # 画板主题 / Canvas theme
+        "canvas_theme": "画板主题",
+        "theme_dot_grid": "点阵网格",
+        "theme_ue5_blueprint": "UE5 蓝图",
+        "ue5_bg_color": "蓝图背景色",
+        "ue5_small_grid_color": "小网格颜色",
+        "ue5_large_grid_color": "大网格颜色",
+        "ue5_large_grid_multiplier": "大网格间隔",
+        "ue5_small_line_width": "小网格线宽",
+        "ue5_large_line_width": "大网格线宽",
+        "ue5_small_line_alpha": "小网格透明度",
+        "ue5_large_line_alpha": "大网格透明度",
+        "dot_size": "点大小",
+        # 色深模式 / Color Depth Mode
+        "color_depth": "色深",
+        "color_depth_mode": "色深模式",
+        "color_depth_auto": "自适应",
+        "color_depth_8bit": "8bit（标准色深）",
+        "color_depth_10bit": "10bit（高色深）",
+        "color_depth_16bit": "16bit（最高精度）",
+        "color_depth_tip": "自适应模式：高位深图像以高位深渲染，低位深图像以8bit渲染。切换后需重启应用。",
+        "color_depth_restart": "色深模式已更改，请重启应用程序以生效。",
+        # 汉堡菜单 / Hamburger menu
+        "menu_tooltip": "菜单"
     }
 }

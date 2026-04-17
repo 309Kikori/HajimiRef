@@ -30,7 +30,7 @@ enum UndoableAction {
     case reorder(imageId: UUID, oldIndex: Int, newIndex: Int)
     
     /// 清空画板
-    case clearBoard(images: [ImageEntity], groups: [GroupEntity])
+    case clearBoard(images: [ImageEntity], groups: [GroupEntity], canvasOffset: CGSize, canvasScale: CGFloat)
     
     /// 创建组
     case createGroup(group: GroupEntity, memberIds: [UUID])
@@ -43,6 +43,18 @@ enum UndoableAction {
     
     /// 移动组
     case moveGroup(groupId: UUID, oldPosition: CGPoint, newPosition: CGPoint, memberMoves: [(imageId: UUID, oldPosition: CGPoint, newPosition: CGPoint)])
+    
+    /// 替换图片数据（去背景等）
+    case replaceImageData(imageId: UUID, oldData: String, newData: String)
+    
+    /// 重置缩放
+    case resetScale(imageId: UUID, oldScale: CGFloat)
+    
+    /// 重命名组
+    case renameGroup(groupId: UUID, oldName: String, newName: String)
+    
+    /// 调整组大小
+    case resizeGroup(groupId: UUID, oldRect: CGRect, newRect: CGRect)
 }
 
 // MARK: - Undo Manager (撤销管理器)
@@ -183,10 +195,12 @@ class CanvasUndoManager {
                 appState.images.insert(image, at: safeIndex)
             }
             
-        case .clearBoard(let images, let groups):
-            // 撤销清空画板：恢复所有图片和组
+        case .clearBoard(let images, let groups, let canvasOffset, let canvasScale):
+            // 撤销清空画板：恢复所有图片、组以及画布视角
             appState.images = images
             appState.groups = groups
+            appState.canvasOffset = canvasOffset
+            appState.canvasScale = canvasScale
             
         case .createGroup(let group, _):
             // 撤销创建组：删除组并移除成员的组ID
@@ -223,6 +237,36 @@ class CanvasUndoManager {
                     appState.images[imgIndex].x = move.oldPosition.x
                     appState.images[imgIndex].y = move.oldPosition.y
                 }
+            }
+            
+        case .replaceImageData(let imageId, let oldData, _):
+            // 撤销替换图片数据：恢复旧数据
+            if let index = appState.images.firstIndex(where: { $0.id == imageId }) {
+                appState.images[index].data = oldData
+                if let d = Data(base64Encoded: oldData) {
+                    appState.images[index]._cachedImage = NSImage(data: d)
+                }
+            }
+            
+        case .resetScale(let imageId, let oldScale):
+            // 撤销重置缩放：恢复旧缩放值
+            if let index = appState.images.firstIndex(where: { $0.id == imageId }) {
+                appState.images[index].scale = oldScale
+            }
+            
+        case .renameGroup(let groupId, let oldName, _):
+            // 撤销重命名组：恢复旧名称
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].name = oldName
+            }
+            
+        case .resizeGroup(let groupId, let oldRect, _):
+            // 撤销调整组大小：恢复旧尺寸
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].x = oldRect.origin.x
+                appState.groups[index].y = oldRect.origin.y
+                appState.groups[index].width = oldRect.width
+                appState.groups[index].height = oldRect.height
             }
         }
     }
@@ -285,12 +329,14 @@ class CanvasUndoManager {
                 appState.images.insert(image, at: safeIndex)
             }
             
-        case .clearBoard(_, _):
-            // 重做清空画板：清空所有图片和组
+        case .clearBoard(_, _, _, _):
+            // 重做清空画板：清空所有图片和组，并重置画布视角
             appState.images.removeAll()
             appState.groups.removeAll()
             appState.selectedImageIds.removeAll()
             appState.selectedGroupId = nil
+            appState.canvasOffset = .zero
+            appState.canvasScale = 1.0
             
         case .createGroup(let group, let memberIds):
             // 重做创建组：恢复组并恢复成员的组ID
@@ -327,6 +373,36 @@ class CanvasUndoManager {
                     appState.images[imgIndex].x = move.newPosition.x
                     appState.images[imgIndex].y = move.newPosition.y
                 }
+            }
+            
+        case .replaceImageData(let imageId, _, let newData):
+            // 重做替换图片数据：应用新数据
+            if let index = appState.images.firstIndex(where: { $0.id == imageId }) {
+                appState.images[index].data = newData
+                if let d = Data(base64Encoded: newData) {
+                    appState.images[index]._cachedImage = NSImage(data: d)
+                }
+            }
+            
+        case .resetScale(let imageId, _):
+            // 重做重置缩放：重新设为 1.0
+            if let index = appState.images.firstIndex(where: { $0.id == imageId }) {
+                appState.images[index].scale = 1.0
+            }
+            
+        case .renameGroup(let groupId, _, let newName):
+            // 重做重命名组：应用新名称
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].name = newName
+            }
+            
+        case .resizeGroup(let groupId, _, let newRect):
+            // 重做调整组大小：应用新尺寸
+            if let index = appState.groups.firstIndex(where: { $0.id == groupId }) {
+                appState.groups[index].x = newRect.origin.x
+                appState.groups[index].y = newRect.origin.y
+                appState.groups[index].width = newRect.width
+                appState.groups[index].height = newRect.height
             }
         }
     }

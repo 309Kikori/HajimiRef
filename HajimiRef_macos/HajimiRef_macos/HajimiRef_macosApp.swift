@@ -4,17 +4,6 @@ import AppKit
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // Ensure the app is a regular app (appears in Dock, has menu bar)
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        
-        // Bring window to front
-        if let window = NSApp.windows.first {
-            window.makeKeyAndOrderFront(nil)
-        }
-    }
-    
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
     }
@@ -26,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct HajimiRef_macosApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var appState = AppState()
+    @Environment(\.openWindow) private var openWindow
     
     // [国际化] 语言设置
     // 默认使用系统语言 (nil)，用户可以在设置中覆盖。
@@ -38,9 +28,16 @@ struct HajimiRef_macosApp: App {
             ContentView()
                 .environment(appState)
                 // [国际化] 动态语言切换
-                // 如果用户选择了特定语言，我们覆盖环境的 locale。
-                // 注意：这可能不会立即更新所有系统提供的组件，但对 SwiftUI 视图有效。
                 .environment(\.locale, appLanguage == "system" ? .current : Locale(identifier: appLanguage))
+                // [Liquid Glass] 工具栏
+                // macOS 26 的 Liquid Glass 窗口 chrome（大圆角、毛玻璃标题栏）
+                // 要求窗口拥有 .toolbar 内容才能激活。
+                // 汉堡菜单视图放在 toolbar 里，确保 Liquid Glass 生效。
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        HamburgerToolbarMenu(appState: appState)
+                    }
+                }
         }
         // [视觉与交互设计] 菜单栏命令
         // 我们自定义 macOS 菜单栏以提供对基本功能的快速访问。
@@ -51,7 +48,7 @@ struct HajimiRef_macosApp: App {
             // 用我们自定义设计的 AboutView 替换标准的"关于"对话框。
             CommandGroup(replacing: .appInfo) {
                 Button("About Hajimi Ref") {
-                    openAboutWindow()
+                    openWindow(id: "about")
                 }
             }
             
@@ -124,7 +121,7 @@ struct HajimiRef_macosApp: App {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             }
             // 视图菜单：窗口行为
-            // 添加一个切换开关以保持窗口“始终置顶”。
+            // 添加一个切换开关以保持窗口"始终置顶"。
             // 这是参考软件的一项关键功能，允许艺术家在另一个应用程序
             // （例如 Photoshop, Blender）中工作时保持参考图可见。
             CommandMenu(LocalizedStringKey("View")) {
@@ -133,11 +130,22 @@ struct HajimiRef_macosApp: App {
             }
         }
         
+        // [Liquid Glass] About 窗口 — 使用 SwiftUI 原生 Window Scene
+        // 替代旧的 NSHostingController 手动创建方式，
+        // macOS 26 的 Window Scene 自动获得液态玻璃窗口效果。
+        Window(LocalizedStringKey("About Hajimi Ref"), id: "about") {
+            AboutView()
+                .environment(\.locale, appLanguage == "system" ? .current : Locale(identifier: appLanguage))
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 350, height: 500)
+        
         // Settings Window
         // Standard macOS Settings/Preferences window.
         // Accessible via "Hajimi Ref > Settings..." or Cmd+,
         Settings {
             SettingsView()
+                .environment(appState)
                 // [国际化] 修复设置窗口语言不跟随的问题
                 // Settings 场景是独立的，需要单独注入环境变数。
                 .environment(\.locale, appLanguage == "system" ? .current : Locale(identifier: appLanguage))

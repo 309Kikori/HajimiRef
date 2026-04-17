@@ -3,14 +3,179 @@ import os
 import json
 import base64
 import math
-from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication)
-from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF, QTimer
-from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter, QColor
+import ctypes
+
+from PySide6.QtCore import Qt, QByteArray, QBuffer, QRectF, QPointF, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
+from PySide6.QtWidgets import (QMainWindow, QGraphicsScene, QFileDialog, QMenu, QMessageBox, QApplication,
+                                QToolButton, QWidget, QHBoxLayout, QSizePolicy, QDialog, QVBoxLayout, QLabel,
+                                QGraphicsDropShadowEffect)
+from PySide6.QtGui import QPixmap, QAction, QShortcut, QKeySequence, QImage, QPainter, QColor, QFont
 from Config import Config, tr
 from Views.Canvas import RefItem, RefView, GroupItem, GroupSettingsDialog
 from Views.SettingsDialog import SettingsDialog
 from ViewModels.MainViewModel import MainViewModel
 from Models.UndoManager import UndoManager, MoveCommand, ScaleCommand, AddItemCommand, DeleteItemsCommand, ClearBoardCommand, OrganizeItemsCommand, GroupCommand, UngroupCommand, GroupMoveCommand
+from Models.ColorDepthManager import ColorDepthManager, ColorDepthMode
+
+
+class AboutDialog(QDialog):
+    """
+    关于对话框 / About dialog - 复刻macOS版本设计
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("about"))
+        self.setFixedSize(350, 620)  # macOS版本宽度350
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """
+        设置UI / Setup UI - 严格按照macOS版本设计
+        """
+        # 主布局，整体spacing=20（对应SwiftUI的VStack(spacing: 20)）
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        # 1. Logo 图片区域 - 128x128，带阴影效果
+        logo_label = QLabel()
+        logo_pixmap = self.load_logo()
+        if logo_pixmap:
+            # 使用高质量缩放
+            scaled_pixmap = logo_pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(scaled_pixmap)
+        else:
+            logo_label.setText("🖼️")
+            logo_label.setStyleSheet("font-size: 128px;")
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 添加阴影效果（对应SwiftUI的.shadow(color: .primary.opacity(0.2), radius: 10, y: 4)）
+        logo_label.setStyleSheet("""
+            QLabel {
+                background: transparent;
+            }
+        """)
+        # 使用QGraphicsDropShadowEffect添加阴影
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 50))  # opacity 0.2
+        shadow.setOffset(0, 4)  # y: 4
+        logo_label.setGraphicsEffect(shadow)
+        layout.addWidget(logo_label)
+        
+        # 2. 文本信息区域容器（对应SwiftUI的VStack(spacing: 8)）
+        info_widget = QWidget()
+        info_layout = QVBoxLayout(info_widget)
+        info_layout.setSpacing(8)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 应用中文名称 - 24px bold（对应.font(.system(size: 24, weight: .bold))）
+        title_cn = QLabel("哈基米 参考")
+        title_cn.setFont(QFont("Microsoft YaHei", 24, QFont.Weight.Bold))
+        title_cn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_layout.addWidget(title_cn)
+        
+        # 应用英文名称 - 16px bold（对应.font(.system(size: 16, weight: .bold))）
+        title_en = QLabel("Hajimi Ref")
+        title_en.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title_en.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_layout.addWidget(title_en)
+        
+        # 版本号信息 - subheadline字体，secondary颜色
+        version_label = QLabel("Version 0.0.2 (Windows GPU)")
+        version_label.setStyleSheet("color: #666; font-size: 11px;")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_layout.addWidget(version_label)
+        
+        # 软件描述文案 - body字体，居中对齐，水平padding
+        desc_label = QLabel("传奇神人与圆头耄耋的设计图像参考软件")
+        desc_label.setWordWrap(True)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc_label.setStyleSheet("font-size: 13px; padding: 0 20px;")
+        info_layout.addWidget(desc_label)
+        
+        # Meme 图片区域 - 高度150，圆角8px，垂直padding 5
+        meme_label = QLabel()
+        meme_pixmap = self.load_meme()
+        if meme_pixmap:
+            # 保持比例，高度150，圆角8px
+            scaled_meme = meme_pixmap.scaledToHeight(150, Qt.TransformationMode.SmoothTransformation)
+            meme_label.setPixmap(scaled_meme)
+            meme_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            meme_label.setStyleSheet("border-radius: 8px; padding: 5px 0;")
+            info_layout.addWidget(meme_label)
+        
+        # 技术栈标识 - 玻璃效果徽章
+        # HStack布局，橙色图标 + 文字
+        # padding: horizontal 12, vertical 6
+        # 玻璃效果，橙色半透明tint
+        # capsule形状
+        # 顶部padding 5
+        tech_frame = QWidget()
+        tech_frame.setFixedHeight(32)
+        tech_frame.setStyleSheet("""
+            QWidget {
+                background-color: rgba(255, 165, 0, 51);
+                border-radius: 16px;
+                border: 1px solid rgba(255, 165, 0, 76);
+            }
+        """)
+        tech_layout = QHBoxLayout(tech_frame)
+        tech_layout.setContentsMargins(12, 6, 12, 6)
+        tech_layout.setSpacing(5)
+        
+        # Swift图标对应的emoji（macOS用的是systemName: "swift"）
+        tech_icon = QLabel("🚀")
+        tech_icon.setStyleSheet("font-size: 14px; background: transparent; border: none;")
+        tech_layout.addWidget(tech_icon)
+        
+        tech_text = QLabel("Built with PySide6 & GPU Acceleration")
+        tech_text.setStyleSheet("color: #666; font-size: 11px; background: transparent; border: none;")
+        tech_layout.addWidget(tech_text)
+        tech_layout.addStretch()
+        
+        # 添加顶部padding 5（对应SwiftUI的.padding(.top, 5)）
+        info_layout.addSpacing(5)
+        info_layout.addWidget(tech_frame)
+        
+        layout.addWidget(info_widget)
+        
+        # 分割线 - 对应SwiftUI的Divider()
+        line = QLabel()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background-color: #d0d0d0;")
+        layout.addWidget(line)
+        
+        # 3. 底部版权信息 - caption字体，secondary颜色
+        copyright_label = QLabel("Copyright © 2025 Xhinonome. All rights reserved.")
+        copyright_label.setStyleSheet("color: #666; font-size: 10px;")
+        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(copyright_label)
+        
+    def load_logo(self):
+        """
+        加载Logo图片 / Load logo image
+        """
+        # 优先使用icon目录下的原始高清图标 (1024x1024)
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "icon", "Appicon-macOS-Default-1024x1024@1x.png")
+        if os.path.exists(icon_path):
+            return QPixmap(icon_path)
+        
+        # 备用：使用assets目录下的图标
+        fallback_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.png")
+        if os.path.exists(fallback_path):
+            return QPixmap(fallback_path)
+        return None
+    
+    def load_meme(self):
+        """
+        加载Meme图片 / Load meme image
+        """
+        # 加载Meme图片（从macOS项目复制过来的）
+        meme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "Meme.PNG")
+        if os.path.exists(meme_path):
+            return QPixmap(meme_path)
+        return None
+
 
 class MainWindow(QMainWindow):
     """
@@ -66,86 +231,332 @@ class MainWindow(QMainWindow):
         self.auto_reset_timer.timeout.connect(self.auto_reset_board)
         self.update_auto_reset_timer()
 
+        # 应用 Win11 窗口特效（透明度 / 亚克力）
+        self.apply_win11_effects()
+
     def setup_menu(self):
         """
-        设置菜单栏 / Setup menu bar
+        设置可折叠汉堡菜单栏 / Setup collapsible hamburger menu bar
         """
-        menubar = self.menuBar()
-        
-        file_menu = menubar.addMenu(tr("file"))
-        
+        # 隐藏原生菜单栏 / Hide native menu bar
+        self.menuBar().hide()
+
+        # --- 构建菜单数据（QMenu 对象）/ Build menu data (QMenu objects) ---
+        self._file_menu = QMenu(tr("file"), self)
         act_add = QAction(tr("open_image"), self)
         act_add.triggered.connect(self.add_images)
-        file_menu.addAction(act_add)
-        
-        file_menu.addSeparator()
-        
+        self._file_menu.addAction(act_add)
+        self._file_menu.addSeparator()
         act_save = QAction(tr("save_board"), self)
         act_save.triggered.connect(self.save_board)
-        file_menu.addAction(act_save)
-        
+        self._file_menu.addAction(act_save)
         act_load = QAction(tr("load_board"), self)
         act_load.triggered.connect(self.load_board)
-        file_menu.addAction(act_load)
-        
-        file_menu.addSeparator()
-        
+        self._file_menu.addAction(act_load)
+        self._file_menu.addSeparator()
         act_export = QAction(tr("export_image"), self)
         act_export.triggered.connect(self.export_board_to_image)
-        file_menu.addAction(act_export)
-        
+        self._file_menu.addAction(act_export)
         act_export_clipboard = QAction(tr("export_to_clipboard"), self)
         act_export_clipboard.triggered.connect(self.export_board_to_clipboard)
-        file_menu.addAction(act_export_clipboard)
-        
-        file_menu.addSeparator()
-        
+        self._file_menu.addAction(act_export_clipboard)
+        self._file_menu.addSeparator()
         act_clear = QAction(tr("clear_board"), self)
         act_clear.triggered.connect(self.clear_board)
-        file_menu.addAction(act_clear)
-        
-        file_menu.addSeparator()
-        
+        self._file_menu.addAction(act_clear)
+        self._file_menu.addSeparator()
         act_exit = QAction(tr("exit"), self)
         act_exit.triggered.connect(self.close)
-        file_menu.addAction(act_exit)
-        
-        settings_menu = menubar.addMenu(tr("settings"))
+        self._file_menu.addAction(act_exit)
 
+        self._settings_menu = QMenu(tr("settings"), self)
         act_prefs = QAction(tr("preferences"), self)
         act_prefs.triggered.connect(self.show_settings)
-        settings_menu.addAction(act_prefs)
-        
-        settings_menu.addSeparator()
-        
+        self._settings_menu.addAction(act_prefs)
+        self._settings_menu.addSeparator()
         self.act_top = QAction(tr("always_on_top"), self)
         self.act_top.setCheckable(True)
         self.act_top.triggered.connect(self.toggle_always_on_top)
-        settings_menu.addAction(self.act_top)
-        
-        # 编辑菜单 / Edit menu
-        edit_menu = menubar.addMenu(tr("edit"))
-        
+        self._settings_menu.addAction(self.act_top)
+
+        self._edit_menu = QMenu(tr("edit"), self)
         self.act_undo = QAction(tr("undo"), self)
         self.act_undo.setShortcut(QKeySequence.Undo)
-        self.act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 确保在任何地方都能触发
+        self.act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.act_undo.triggered.connect(self.undo_action)
-        edit_menu.addAction(self.act_undo)
-        
+        self._edit_menu.addAction(self.act_undo)
         self.act_redo = QAction(tr("redo"), self)
         self.act_redo.setShortcut(QKeySequence("Ctrl+Shift+Z"))
-        self.act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # 确保在任何地方都能触发
+        self.act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.act_redo.triggered.connect(self.redo_action)
-        edit_menu.addAction(self.act_redo)
-        
-        help_menu = menubar.addMenu(tr("help"))
+        self._edit_menu.addAction(self.act_redo)
+
+        self._help_menu = QMenu(tr("help"), self)
         act_about = QAction(tr("about"), self)
         act_about.triggered.connect(self.show_about)
-        help_menu.addAction(act_about)
+        self._help_menu.addAction(act_about)
+
+        # 确保快捷键即使菜单隐藏也能工作 / Ensure shortcuts work even when menu is hidden
+        self.addAction(self.act_undo)
+        self.addAction(self.act_redo)
+
+        # --- 浮动汉堡菜单（叠在画布上方，不占布局空间）/ Floating hamburger menu overlay ---
+        # 浮动容器：包含汉堡按钮 + 展开的菜单按钮 / Float container: hamburger btn + expanded menu btns
+        self._menu_float = QWidget(self)
+        self._menu_float.setObjectName("menuFloat")
+        self._menu_float.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self._menu_float.setStyleSheet("""
+            QWidget#menuFloat {
+                background: transparent;
+            }
+        """)
+        self._menu_float_layout = QHBoxLayout(self._menu_float)
+        self._menu_float_layout.setContentsMargins(8, 8, 0, 0)
+        self._menu_float_layout.setSpacing(8)
+        self._menu_float_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        # 汉堡按钮 / Hamburger button
+        self._hamburger_btn = QToolButton(self._menu_float)
+        self._hamburger_btn.setText("☰")
+        self._hamburger_btn.setToolTip(tr("menu_tooltip"))
+        self._hamburger_btn.setObjectName("hamburgerBtn")
+        self._hamburger_btn.setFixedSize(30, 30)
+        self._hamburger_btn.setStyleSheet("""
+            QToolButton#hamburgerBtn {
+                background-color: rgba(255, 255, 255, 0.10);
+                color: #b0b0b0;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+                font-size: 15px;
+            }
+            QToolButton#hamburgerBtn:hover {
+                background-color: rgba(255, 255, 255, 0.16);
+                color: #e0e0e0;
+            }
+            QToolButton#hamburgerBtn:pressed {
+                background-color: rgba(255, 255, 255, 0.22);
+            }
+        """)
+        self._hamburger_btn.clicked.connect(self._toggle_menu_expand)
+        self._menu_float_layout.addWidget(self._hamburger_btn)
+
+        # 可展开的菜单按钮容器 / Expandable menu button container
+        self._menu_container = QWidget(self._menu_float)
+        self._menu_container.setObjectName("menuContainer")
+        self._menu_container_layout = QHBoxLayout(self._menu_container)
+        self._menu_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._menu_container_layout.setSpacing(6)
+
+        # 创建各菜单的 QToolButton / Create QToolButton for each menu
+        menu_items = [
+            (tr("file"), self._file_menu),
+            (tr("settings"), self._settings_menu),
+            (tr("edit"), self._edit_menu),
+            (tr("help"), self._help_menu),
+        ]
+        self._menu_buttons = []
+        for label, menu in menu_items:
+            btn = QToolButton(self._menu_container)
+            btn.setText(label)
+            btn.setMenu(menu)
+            btn.setPopupMode(QToolButton.InstantPopup)
+            btn.setObjectName("menuBtn")
+            btn.setFixedHeight(30)
+            btn.setStyleSheet("""
+                QToolButton#menuBtn {
+                    background-color: rgba(255, 255, 255, 0.10);
+                    color: #b0b0b0;
+                    border: 1px solid rgba(255, 255, 255, 0.06);
+                    border-radius: 8px;
+                    padding: 0px 14px;
+                    font-size: 12px;
+                }
+                QToolButton#menuBtn:hover {
+                    background-color: rgba(255, 255, 255, 0.16);
+                    color: #e0e0e0;
+                }
+                QToolButton#menuBtn:pressed {
+                    background-color: rgba(255, 255, 255, 0.22);
+                }
+                QToolButton#menuBtn::menu-indicator {
+                    image: none;
+                }
+            """)
+            self._menu_container_layout.addWidget(btn)
+            self._menu_buttons.append(btn)
+
+        self._menu_container.setFixedHeight(30)
+        self._menu_container.setMaximumWidth(0)  # 初始收起 / Initially collapsed
+        self._menu_container.setStyleSheet("background: transparent;")
+        self._menu_float_layout.addWidget(self._menu_container)
+
+        # 设置浮动层大小和位置 / Set float layer size and position
+        self._menu_float.setFixedHeight(46)
+        self._menu_float.raise_()  # 确保在最上层 / Ensure on top
+
+        # 展开/收起状态 / Expand/collapse state
+        self._menu_expanded = False
+
+        # 自动收起计时器 / Auto-collapse timer
+        self._auto_collapse_timer = QTimer(self)
+        self._auto_collapse_timer.setSingleShot(True)
+        self._auto_collapse_timer.setInterval(5000)  # 5秒无操作自动收起 / 5s inactivity auto-collapse
+        self._auto_collapse_timer.timeout.connect(self._collapse_menu)
+
+        # 监听菜单弹出/关闭来重置计时器 / Listen to menu show/hide to reset timer
+        for menu in [self._file_menu, self._settings_menu, self._edit_menu, self._help_menu]:
+            menu.aboutToShow.connect(self._on_menu_about_to_show)
+            menu.aboutToHide.connect(self._on_menu_about_to_hide)
 
         # Context Menu
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.show_context_menu)
+
+    def _toggle_menu_expand(self):
+        """切换菜单展开/收起 / Toggle menu expand/collapse"""
+        if self._menu_expanded:
+            self._collapse_menu()
+        else:
+            self._expand_menu()
+
+    def _make_spring_curve(self, overshoot=1.70158):
+        """
+        创建 iOS 风格弹簧缓动曲线 / Create iOS-style spring easing curve
+        基于 CSS cubic-bezier(0.175, 0.885, 0.32, 1.275) 的近似
+        overshoot 控制回弹幅度：1.70158 是经典值，越大越 Q 弹
+        """
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(overshoot)
+        return curve
+
+    def _expand_menu(self):
+        """
+        展开菜单栏（iOS 灵动弹簧动画）/ Expand menu bar with iOS-style spring animation
+        原理：容器宽度 OutBack 弹性展开 + 每个按钮交错 OutBack 弹入（从 0 宽弹到目标宽）
+        效果：按钮像弹簧一样逐个"弹"出来，会微微超过目标位置再弹回
+        """
+        if self._menu_expanded:
+            return
+        self._menu_expanded = True
+
+        # 记录每个按钮的目标宽度 / Record target width for each button
+        btn_target_widths = [btn.sizeHint().width() for btn in self._menu_buttons]
+        target_width = sum(btn_target_widths) + 6 * (len(self._menu_buttons) - 1) + 10
+
+        # 先把所有按钮宽度设为 0（隐藏）/ Set all buttons to 0 width (hidden)
+        for btn in self._menu_buttons:
+            btn.setFixedWidth(0)
+            btn.setVisible(True)
+
+        # 容器宽度弹性展开 / Container spring expand
+        self._expand_group = QParallelAnimationGroup(self)
+
+        width_anim = QPropertyAnimation(self._menu_container, b"maximumWidth", self)
+        width_anim.setDuration(380)
+        width_anim.setStartValue(0)
+        width_anim.setEndValue(target_width)
+        width_anim.setEasingCurve(self._make_spring_curve(1.2))
+        self._expand_group.addAnimation(width_anim)
+
+        self._expand_group.finished.connect(self._update_float_width)
+        self._expand_group.start()
+
+        # 每个按钮交错弹入（60ms 间隔，OutBack 带回弹）
+        # Staggered spring-in for each button (60ms delay, OutBack with overshoot)
+        self._btn_spring_anims = []  # 防止 GC / Prevent GC
+        spring_curve = self._make_spring_curve(2.0)  # 按钮用更大的回弹幅度，更 Q 弹
+        for i, (btn, tw) in enumerate(zip(self._menu_buttons, btn_target_widths)):
+            anim = QPropertyAnimation(btn, b"minimumWidth", self)
+            anim.setDuration(350)
+            anim.setStartValue(0)
+            anim.setEndValue(tw)
+            anim.setEasingCurve(spring_curve)
+            QTimer.singleShot(i * 60, anim.start)
+            self._btn_spring_anims.append(anim)
+
+            # 同步设置 maximumWidth 防止按钮被拉伸 / Sync maximumWidth to prevent stretching
+            anim_max = QPropertyAnimation(btn, b"maximumWidth", self)
+            anim_max.setDuration(350)
+            anim_max.setStartValue(0)
+            anim_max.setEndValue(tw)
+            anim_max.setEasingCurve(spring_curve)
+            QTimer.singleShot(i * 60, anim_max.start)
+            self._btn_spring_anims.append(anim_max)
+
+        # 启动自动收起计时器 / Start auto-collapse timer
+        self._auto_collapse_timer.start()
+
+    def _collapse_menu(self):
+        """
+        收起菜单栏（iOS 灵动弹簧动画）/ Collapse menu bar with iOS-style spring animation
+        原理：按钮反向交错收缩（InBack 先微微膨胀再快速缩小）+ 容器收缩
+        效果：按钮像被吸回去一样，先微微鼓起再迅速消失
+        """
+        if not self._menu_expanded:
+            return
+        self._menu_expanded = False
+        self._auto_collapse_timer.stop()
+
+        # 按钮反向交错收缩 / Reverse staggered spring-out
+        self._btn_collapse_anims = []  # 防止 GC / Prevent GC
+        collapse_curve = QEasingCurve(QEasingCurve.InBack)
+        collapse_curve.setOvershoot(1.5)  # 收起时先微微膨胀再缩小
+
+        reversed_btns = list(reversed(self._menu_buttons))
+        for i, btn in enumerate(reversed_btns):
+            cur_w = btn.width()
+            anim = QPropertyAnimation(btn, b"minimumWidth", self)
+            anim.setDuration(250)
+            anim.setStartValue(cur_w)
+            anim.setEndValue(0)
+            anim.setEasingCurve(collapse_curve)
+            QTimer.singleShot(i * 45, anim.start)
+            self._btn_collapse_anims.append(anim)
+
+            anim_max = QPropertyAnimation(btn, b"maximumWidth", self)
+            anim_max.setDuration(250)
+            anim_max.setStartValue(cur_w)
+            anim_max.setEndValue(0)
+            anim_max.setEasingCurve(collapse_curve)
+            QTimer.singleShot(i * 45, anim_max.start)
+            self._btn_collapse_anims.append(anim_max)
+
+        # 容器宽度收缩（等按钮开始收缩后再收容器）
+        # Container collapse (delayed to let buttons start collapsing)
+        total_delay = len(self._menu_buttons) * 45
+        QTimer.singleShot(total_delay, self._start_collapse_width_anim)
+
+    def _start_collapse_width_anim(self):
+        """启动容器宽度收缩动画 / Start container width collapse animation"""
+        anim = QPropertyAnimation(self._menu_container, b"maximumWidth", self)
+        anim.setDuration(280)
+        anim.setStartValue(self._menu_container.maximumWidth())
+        anim.setEndValue(0)
+        collapse_curve = QEasingCurve(QEasingCurve.InBack)
+        collapse_curve.setOvershoot(0.8)
+        anim.setEasingCurve(collapse_curve)
+        anim.finished.connect(self._update_float_width)
+        anim.start()
+        self._collapse_anim = anim  # 防止被 GC / Prevent GC
+
+    def _update_float_width(self):
+        """更新浮动层宽度以适应内容 / Update float layer width to fit content"""
+        self._menu_float.adjustSize()
+
+    def resizeEvent(self, event):
+        """窗口大小改变时更新浮动菜单位置 / Update float menu position on resize"""
+        super().resizeEvent(event)
+        if hasattr(self, '_menu_float'):
+            self._menu_float.setFixedWidth(self.width())
+            self._menu_float.raise_()
+
+    def _on_menu_about_to_show(self):
+        """菜单弹出时停止自动收起计时器 / Stop auto-collapse when menu opens"""
+        self._auto_collapse_timer.stop()
+
+    def _on_menu_about_to_hide(self):
+        """菜单关闭后重启自动收起计时器 / Restart auto-collapse after menu closes"""
+        self._auto_collapse_timer.start()
 
     def show_settings(self):
         """
@@ -163,24 +574,231 @@ class MainWindow(QMainWindow):
         # Rebuild menu is complex in Qt dynamic, simpler to just restart or update texts.
         # For simplicity, we just update title and let user restart or re-open menus.
         # A full reload would require clearing menuBar and calling setup_menu again.
-        self.menuBar().clear()
+        # 移除旧浮动菜单并重建 / Remove old float menu and rebuild
+        if hasattr(self, '_menu_float'):
+            self._menu_float.deleteLater()
         self.setup_menu()
 
     def toggle_always_on_top(self):
         """
         切换窗口置顶状态 / Toggle always on top
+        
+        setWindowFlags() 会销毁并重建原生窗口，因此需要：
+        1. 保存窗口几何信息和当前完整标志
+        2. 显式构建新标志，确保包含所有必要的窗口装饰标志
+        3. show() 后重新应用 DWM 特效和画布 viewport 状态
+        
+        setWindowFlags() destroys and recreates the native window, so we must:
+        1. Save window geometry and current flags
+        2. Explicitly build new flags ensuring all decoration flags are preserved
+        3. Re-apply DWM effects and canvas viewport state after show()
         """
+        # 保存当前几何信息 / Save current geometry
+        geo = self.geometry()
+        was_maximized = self.isMaximized()
+        
+        # 构建新标志：以 Qt.Window 为基础，显式包含所有标题栏按钮标志
+        # Build new flags: start with Qt.Window base, explicitly include all title bar button flags
+        base_flags = (
+            Qt.Window
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        
         if self.act_top.isChecked():
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            new_flags = base_flags | Qt.WindowStaysOnTopHint
         else:
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-        self.show()
+            new_flags = base_flags
+        
+        self.setWindowFlags(new_flags)
+        
+        # 恢复窗口几何和显示状态 / Restore geometry and display state
+        if was_maximized:
+            self.showMaximized()
+        else:
+            self.setGeometry(geo)
+            self.show()
+        
+        # 重新应用 DWM 亚克力特效（HWND 已重建）/ Re-apply DWM acrylic effects (HWND was recreated)
+        self.apply_win11_effects()
+        
+        # 重新应用画布 viewport 模式（亚克力穿透 vs GPU 加速）
+        # Re-apply canvas viewport mode (acrylic passthrough vs GPU acceleration)
+        if hasattr(self, 'view'):
+            self.view.set_acrylic_mode(Config.acrylic_enabled)
+
+    def apply_win11_effects(self):
+        """
+        应用 Windows 11 窗口特效（亚克力背景 + 背景 alpha 通道透明）
+        Apply Windows 11 window effects (acrylic background + background alpha channel transparency)
+        
+        实现原理：
+        1. 设置 WA_TranslucentBackground 让 Qt 不绘制窗口底色
+        2. 调用 DwmExtendFrameIntoClientArea 将 DWM 渲染扩展到客户区
+        3. 调用 DwmSetWindowAttribute 设置亚克力/云母背景材质
+        4. 通过 QSS 中 rgba 的 alpha 通道控制各区域的透明程度
+        5. 禁用 DWM 非客户区渲染，消除窗口边缘黑边
+        """
+        if sys.platform != "win32":
+            return
+
+        try:
+            hwnd = int(self.winId())
+            dwmapi = ctypes.windll.dwmapi
+
+            if Config.acrylic_enabled:
+                # --- 步骤1：设置 Qt 透明背景属性 ---
+                self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+                # --- 步骤1.5：禁用 DWM 非客户区渲染，消除窗口边缘 DWM 绘制的黑边 ---
+                # DWMWA_NCRENDERING_POLICY = 2
+                # 值 2 = DWMNCRP_DISABLED（禁用非客户区渲染）
+                # 这可以阻止 DWM 在窗口边缘绘制默认边框，消除 1-2px 的黑边
+                DWMWA_NCRENDERING_POLICY = 2
+                ncr_disabled = ctypes.c_int(2)
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_NCRENDERING_POLICY,
+                    ctypes.byref(ncr_disabled),
+                    ctypes.sizeof(ncr_disabled)
+                )
+
+                # --- 步骤2：将 DWM 帧扩展到整个客户区 ---
+                class MARGINS(ctypes.Structure):
+                    _fields_ = [
+                        ("cxLeftWidth", ctypes.c_int),
+                        ("cxRightWidth", ctypes.c_int),
+                        ("cyTopHeight", ctypes.c_int),
+                        ("cyBottomHeight", ctypes.c_int),
+                    ]
+                margins = MARGINS(-1, -1, -1, -1)  # -1 = 扩展到整个窗口
+                dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+
+                # --- 步骤3：启用亚克力效果 ---
+                # DWMWA_SYSTEMBACKDROP_TYPE = 38（Win11 22H2+）
+                # 值 3 = DWMSBT_TRANSIENTWINDOW（亚克力 Acrylic）
+                DWMWA_SYSTEMBACKDROP_TYPE = 38
+                DWMSBT_ACRYLIC = ctypes.c_int(3)
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_SYSTEMBACKDROP_TYPE,
+                    ctypes.byref(DWMSBT_ACRYLIC),
+                    ctypes.sizeof(DWMSBT_ACRYLIC)
+                )
+
+                # --- 步骤4：开启暗色标题栏以匹配深色主题 ---
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                dark = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_USE_IMMERSIVE_DARK_MODE,
+                    ctypes.byref(dark),
+                    ctypes.sizeof(dark)
+                )
+
+                # --- 步骤4.5：隐藏 DWM 窗口边框颜色，彻底消除 1px 黑边 ---
+                # DWMWA_BORDER_COLOR = 34（Win11 22H2+）
+                # DWMWA_COLOR_NONE = 0xFFFFFFFE（隐藏边框颜色）
+                # 这是 Win11 官方 API，比 DWMWA_NCRENDERING_POLICY 更彻底
+                try:
+                    DWMWA_BORDER_COLOR = 34
+                    DWMWA_COLOR_NONE = ctypes.c_uint(0xFFFFFFFE)
+                    dwmapi.DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_BORDER_COLOR,
+                        ctypes.byref(DWMWA_COLOR_NONE),
+                        ctypes.sizeof(DWMWA_COLOR_NONE)
+                    )
+                except Exception:
+                    pass  # 旧版 Win11 可能不支持此属性
+
+                # --- 步骤5：通过 QSS 设置背景 alpha 通道 ---
+                self._apply_transparent_stylesheet()
+
+            else:
+                # 关闭亚克力效果，恢复默认
+                self.setAttribute(Qt.WA_TranslucentBackground, False)
+
+                # 恢复 DWM 非客户区渲染策略 / Restore DWM NC rendering policy
+                DWMWA_NCRENDERING_POLICY = 2
+                ncr_auto = ctypes.c_int(0)  # DWMNCRP_AUTO = 0
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_NCRENDERING_POLICY,
+                    ctypes.byref(ncr_auto),
+                    ctypes.sizeof(ncr_auto)
+                )
+
+                DWMWA_SYSTEMBACKDROP_TYPE = 38
+                DWMSBT_DISABLE = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_SYSTEMBACKDROP_TYPE,
+                    ctypes.byref(DWMSBT_DISABLE),
+                    ctypes.sizeof(DWMSBT_DISABLE)
+                )
+
+                # 重置 DWM 帧扩展
+                class MARGINS(ctypes.Structure):
+                    _fields_ = [
+                        ("cxLeftWidth", ctypes.c_int),
+                        ("cxRightWidth", ctypes.c_int),
+                        ("cyTopHeight", ctypes.c_int),
+                        ("cyBottomHeight", ctypes.c_int),
+                    ]
+                margins = MARGINS(0, 0, 0, 0)
+                dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(margins))
+
+                # 恢复不透明背景样式
+                self._restore_opaque_stylesheet()
+
+        except Exception as e:
+            # 旧版 Windows 不支持该 API，静默忽略
+            print(f"[Win11Effects] 应用效果失败: {e}")
+
+    def _apply_transparent_stylesheet(self):
+        """
+        在亚克力模式下，通过 QSS rgba alpha 通道让背景半透明。
+        Apply transparent background stylesheet using rgba alpha channel in acrylic mode.
+        
+        修复黑边：
+        - QMainWindow 添加 margin: 0px; border: none; 防止 Qt 在窗口边缘绘制默认边框
+        - QMenuBar / QToolBar 同样设置 border: none
+        - 边缘黑边来源：Qt 默认的控件边框 + QPalette.Window alpha 混合 + DWM 窗口边框残留
+        """
+        alpha = Config.bg_opacity  # 0~255
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: rgba(53, 53, 53, {alpha});
+                margin: 0px;
+                border: none;
+            }}
+            QMenuBar {{
+                background-color: rgba(53, 53, 53, {min(alpha + 30, 255)});
+                border: none;
+            }}
+            QToolBar {{
+                background-color: rgba(53, 53, 53, {min(alpha + 20, 255)});
+                border: none;
+            }}
+        """)
+
+    def _restore_opaque_stylesheet(self):
+        """
+        恢复不透明的默认背景样式。
+        Restore opaque default background stylesheet.
+        """
+        self.setStyleSheet("")  # 清除自定义样式，恢复 App.py 中的全局调色板
 
     def show_about(self):
         """
         显示关于对话框 / Show about dialog
         """
-        QMessageBox.information(self, tr("about"), tr("about_text"))
+        dialog = AboutDialog(self)
+        dialog.exec()
 
     def show_context_menu(self, pos):
         """
@@ -707,28 +1325,59 @@ class MainWindow(QMainWindow):
         if data:
             self.create_item_from_data(data, x, y)
 
+    def _get_color_depth_manager(self) -> ColorDepthManager:
+        """
+        获取全局色深管理器实例 / Get global color depth manager instance
+        """
+        app = QApplication.instance()
+        if hasattr(app, 'color_depth_manager'):
+            return app.color_depth_manager
+        # 回退：创建默认实例 / Fallback: create default instance
+        return ColorDepthManager(ColorDepthManager.get_mode_from_string(Config.color_depth_mode))
+
     def create_item_from_image(self, image, x, y):
         """
-        从 QImage 创建图片项（直接转换，跳过PNG编解码）/ Create image item from QImage (direct conversion, skip PNG encoding)
+        从 QImage 创建图片项（自适应色深转换）/ Create image item from QImage (adaptive color depth)
         """
         if not image.isNull():
-            # 直接 QImage → QPixmap，零编解码开销 / Direct QImage → QPixmap, zero encoding overhead
+            # ── 自适应色深：根据图像原始位深选择最佳渲染格式 ──
+            # Adaptive color depth: select optimal rendering format based on image's original bit depth
+            cdm = self._get_color_depth_manager()
+            image = cdm.convert_image(image)
+            # QImage → QPixmap
             pixmap = QPixmap.fromImage(image)
             if not pixmap.isNull():
                 item = RefItem(pixmap)  # image_data 为 None，惰性生成 / image_data is None, lazy generation
                 item.setPos(x, y)
                 self.scene.addItem(item)
                 self.undo_manager.push(AddItemCommand(self.scene, item))
+                self.view.markBoardBoundsDirty()
+                self.view.scheduleViewportUpdate()
                 return item
         return None
 
     def create_item_from_data(self, data, x, y, scale=1.0, rotation=0, zIndex=0, group_id=None, record_undo=True):
         """
-        从二进制数据创建图片项 / Create image item from binary data
+        从二进制数据创建图片项（自适应色深）/ Create image item from binary data (adaptive color depth)
         record_undo: 是否记录到撤销历史 / Whether to record to undo history
         """
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
+        # ── 自适应色深：先检测数据位深，再选择最佳格式加载 ──
+        cdm = self._get_color_depth_manager()
+        depth_info = cdm.detect_depth_from_data(data)
+        
+        # 如果是高位深图像且非强制8bit模式，使用 QImage 加载以保留精度
+        if depth_info.is_high_bit_depth and cdm.mode != ColorDepthMode.FORCE_8BIT:
+            image = QImage()
+            if image.loadFromData(data):
+                image = cdm.convert_image(image)
+                pixmap = QPixmap.fromImage(image)
+            else:
+                pixmap = QPixmap()
+                pixmap.loadFromData(data)
+        else:
+            pixmap = QPixmap()
+            pixmap.loadFromData(data)
+        if not pixmap.isNull():
             item = RefItem(pixmap, data)
             item.setPos(x, y)
             item.setScale(scale)
@@ -741,6 +1390,8 @@ class MainWindow(QMainWindow):
             if record_undo:
                 self.undo_manager.push(AddItemCommand(self.scene, item))
             
+            self.view.markBoardBoundsDirty()
+            self.view.scheduleViewportUpdate()
             return item
         else:
             print("Failed to load pixmap from data")
@@ -748,17 +1399,28 @@ class MainWindow(QMainWindow):
 
     def delete_selected(self):
         """
-        删除选中的图片 / Delete selected images
+        删除选中的图片或解散选中的组 / Delete selected images or ungroup selected groups
         """
-        selected = [item for item in self.scene.selectedItems() if isinstance(item, RefItem)]
-        if not selected:
+        all_selected = self.scene.selectedItems()
+        
+        # 处理选中的组：解散组（组内图片保留）/ Handle selected groups: ungroup (keep member images)
+        selected_groups = [item for item in all_selected if isinstance(item, GroupItem)]
+        for group_item in selected_groups:
+            self.ungroup(group_item)
+        
+        # 处理选中的图片：删除 / Handle selected images: delete
+        selected_items = [item for item in all_selected if isinstance(item, RefItem)]
+        if not selected_items:
             return
         
         # 记录删除操作到撤销历史 / Record delete action to undo history
-        self.undo_manager.push(DeleteItemsCommand(self.scene, selected))
+        self.undo_manager.push(DeleteItemsCommand(self.scene, selected_items))
         
-        for item in selected:
+        for item in selected_items:
             self.scene.removeItem(item)
+        
+        self.view.markBoardBoundsDirty()
+        self.view.scheduleViewportUpdate()
 
     def copy_selected_items(self):
         """
@@ -808,6 +1470,8 @@ class MainWindow(QMainWindow):
             self.scene.clearSelection()
             for item in new_items:
                 item.setSelected(True)
+            self.view.markBoardBoundsDirty()
+            self.view.scheduleViewportUpdate()
             return
         
         # 2. 从系统剪贴板粘贴 / Paste from system clipboard
@@ -949,16 +1613,33 @@ class MainWindow(QMainWindow):
             else:
                 path += '.bmp'
         
-        # 创建足够大的 QImage
+        # 创建足够大的 QImage（自适应色深）/ Create QImage with adaptive color depth
         width = int(rect.width())
         height = int(rect.height())
         
+        # ── 自适应色深导出 ──
+        cdm = self._get_color_depth_manager()
+        file_ext = path.rsplit('.', 1)[-1].lower() if '.' in path else 'png'
+        
+        # 检测画布上图像的最高位深
+        max_depth_info = None
+        for item in items:
+            if isinstance(item, RefItem) and item.image_data:
+                info = cdm.detect_depth_from_data(item.image_data)
+                if max_depth_info is None or info.bits_per_channel > max_depth_info.bits_per_channel:
+                    max_depth_info = info
+        if max_depth_info is None:
+            from Models.ColorDepthManager import ImageColorDepthInfo
+            max_depth_info = ImageColorDepthInfo()
+        
+        need_alpha = path.lower().endswith('.png')
+        export_format = cdm.get_export_format(max_depth_info, file_ext, need_alpha)
+        image = QImage(width, height, export_format)
+        
         # 根据格式选择透明背景或白色背景
-        if path.lower().endswith('.png'):
-            image = QImage(width, height, QImage.Format_ARGB32)
+        if need_alpha:
             image.fill(Qt.transparent)
         else:
-            image = QImage(width, height, QImage.Format_RGB32)
             image.fill(Qt.white)
         
         # 使用 QPainter 将场景渲染到图片
@@ -997,11 +1678,24 @@ class MainWindow(QMainWindow):
         margin = 20
         rect = rect.adjusted(-margin, -margin, margin, margin)
         
-        # 创建足够大的 QImage（使用透明背景）
+        # 创建足够大的 QImage（自适应色深，使用透明背景）/ Create QImage with adaptive color depth
         width = int(rect.width())
         height = int(rect.height())
         
-        image = QImage(width, height, QImage.Format_ARGB32)
+        # ── 自适应色深导出到剪贴板 ──
+        cdm = self._get_color_depth_manager()
+        max_depth_info = None
+        for item in items:
+            if isinstance(item, RefItem) and item.image_data:
+                info = cdm.detect_depth_from_data(item.image_data)
+                if max_depth_info is None or info.bits_per_channel > max_depth_info.bits_per_channel:
+                    max_depth_info = info
+        if max_depth_info is None:
+            from Models.ColorDepthManager import ImageColorDepthInfo
+            max_depth_info = ImageColorDepthInfo()
+        
+        export_format = cdm.get_export_format(max_depth_info, 'png', True)
+        image = QImage(width, height, export_format)
         image.fill(Qt.transparent)
         
         # 使用 QPainter 将场景渲染到图片

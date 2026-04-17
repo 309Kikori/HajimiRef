@@ -169,23 +169,13 @@ struct WindowAccessor: NSViewRepresentable {
         
         // MARK: - Scroll Wheel (Zoom)
         private func handleScrollWheel(_ event: NSEvent) {
-            if event.modifierFlags.contains(.control) {
-                // Ctrl + Wheel -> Scale Selected Images
-                let scaleFactor: CGFloat = event.deltaY > 0 ? 1.05 : 0.95
-                for id in appState.selectedImageIds {
-                    if let index = appState.images.firstIndex(where: { $0.id == id }) {
-                        appState.images[index].scale *= scaleFactor
-                    }
-                }
-            } else {
-                // Wheel -> Zoom Canvas
-                let zoomDelta = event.deltaY * 0.005
-                let zoomFactor = 1.0 + zoomDelta
-                let newScale = appState.canvasScale * zoomFactor
-                // [缩放范围] 放宽限制，与 win11 行为对齐（Qt 无显式限制）
-                // 但保留安全范围防止极端值导致渲染问题
-                appState.canvasScale = min(max(newScale, 0.02), 50.0)
-            }
+            // Wheel -> Zoom Canvas
+            let zoomDelta = event.deltaY * 0.005
+            let zoomFactor = 1.0 + zoomDelta
+            let newScale = appState.canvasScale * zoomFactor
+            // [缩放范围] 放宽限制，与 win11 行为对齐（Qt 无显式限制）
+            // 但保留安全范围防止极端值导致渲染问题
+            appState.canvasScale = min(max(newScale, 0.02), 50.0)
         }
         
         // MARK: - Magnify
@@ -207,6 +197,17 @@ struct CanvasView: View {
     @AppStorage("canvasBgColorHex") private var canvasBgColorHex: String = "#1E1E1E"
     @AppStorage("inactiveBgColorHex") private var inactiveBgColorHex: String = "#141414"  // 非活动区域更深色
     @AppStorage("gridColorHex") private var gridColorHex: String = "#404040"
+    @AppStorage("canvasTheme") private var canvasTheme: String = "dot_grid"
+    
+    // UE5 蓝图主题专属配置（默认值与 Win11 端对齐）/ UE5 Blueprint theme specific settings (defaults aligned with Win11)
+    @AppStorage("ue5BgColorHex") private var ue5BgColorHex: String = "#3B3B3B"
+    @AppStorage("ue5SmallGridColorHex") private var ue5SmallGridColorHex: String = "#4D4D4D"
+    @AppStorage("ue5LargeGridColorHex") private var ue5LargeGridColorHex: String = "#575757"
+    @AppStorage("ue5LargeGridMultiplier") private var ue5LargeGridMultiplier: Int = 8
+    @AppStorage("ue5SmallLineWidth") private var ue5SmallLineWidth: Double = 1.5
+    @AppStorage("ue5LargeLineWidth") private var ue5LargeLineWidth: Double = 3.0
+    @AppStorage("ue5SmallLineAlpha") private var ue5SmallLineAlpha: Double = 0.31
+    @AppStorage("ue5LargeLineAlpha") private var ue5LargeLineAlpha: Double = 0.63
     
     // [交互设计] 框选状态
     @State private var selectionRect: CGRect? = nil
@@ -219,8 +220,9 @@ struct CanvasView: View {
             ZStack {
                 // 0. Visual Background Layer - 非活动区域背景（更深色）
                 // [视觉设计] 非活动区域用更深的颜色
+                // 不能用 .ignoresSafeArea()，否则不透明纯色会覆盖标题栏，
+                // 导致 Liquid Glass 玻璃效果被遮挡。
                 Color(hex: inactiveBgColorHex)
-                    .ignoresSafeArea()
                 
                 // 0.3 Active Area Background Layer - 活动区域背景（较浅色）
                 // [性能优化] 只在有图片的区域显示较浅背景
@@ -233,15 +235,33 @@ struct CanvasView: View {
                 )
                 
                 // 0.5 Grid Layer
-                // [视觉设计] 点阵网格，只在活动区域渲染
+                // [视觉设计] 根据画板主题选择不同的网格风格
                 if showGrid {
-                    OptimizedGridBackground(
-                        appState: appState,
-                        offset: appState.canvasOffset,
-                        scale: appState.canvasScale,
-                        color: Color(hex: gridColorHex),
-                        frameSize: geometry.size
-                    )
+                    if canvasTheme == "ue5_blueprint" {
+                        UE5BlueprintGridBackground(
+                            appState: appState,
+                            offset: appState.canvasOffset,
+                            scale: appState.canvasScale,
+                            frameSize: geometry.size,
+                            bgColorHex: ue5BgColorHex,
+                            smallGridColorHex: ue5SmallGridColorHex,
+                            largeGridColorHex: ue5LargeGridColorHex,
+                            largeGridMultiplier: ue5LargeGridMultiplier,
+                            smallLineWidth: ue5SmallLineWidth,
+                            largeLineWidth: ue5LargeLineWidth,
+                            smallLineAlpha: ue5SmallLineAlpha,
+                            largeLineAlpha: ue5LargeLineAlpha
+                        )
+                    } else {
+                        OptimizedGridBackground(
+                            appState: appState,
+                            offset: appState.canvasOffset,
+                            scale: appState.canvasScale,
+                            color: Color(hex: gridColorHex),
+                            frameSize: geometry.size,
+                            dotSize: dotSize
+                        )
+                    }
                 }
                 
                 // 1. Interaction Layer (Click to clear, Drag to Box Select)
@@ -502,6 +522,8 @@ struct ImageView: View {
     @State private var dragStartPositions: [UUID: CGPoint] = [:]  // 拖拽开始时的位置
     @State private var scaleStartValue: CGFloat = 1.0  // 缩放开始时的值
     @State private var rotationStartValue: CGFloat = 0  // 旋转开始时的值
+    @State private var isScaleGestureActive: Bool = false  // 缩放手势是否正在进行
+    @State private var isRotationGestureActive: Bool = false  // 旋转手势是否正在进行
     @State private var resizeStartStates: [(id: UUID, scale: CGFloat, position: CGPoint)] = []  // resize开始时的状态
     
     var isSelected: Bool {
@@ -695,8 +717,9 @@ struct ImageView: View {
                             MagnificationGesture()
                                 .onChanged { value in
                                     // [撤销/重做] 记录缩放开始时的值（仅在第一次 onChanged 时记录）
-                                    if zoomScale == 1.0 {
+                                    if !isScaleGestureActive {
                                         scaleStartValue = imageEntity.scale
+                                        isScaleGestureActive = true
                                     }
                                     zoomScale = value
                                 }
@@ -715,6 +738,7 @@ struct ImageView: View {
                                     }
                                     zoomScale = 1.0
                                     scaleStartValue = 1.0
+                                    isScaleGestureActive = false
                                     
                                     // [画布扩展] 缩放结束后检查是否需要扩展画板边界
                                     appState.updateBoardBoundsIfNeeded()
@@ -724,8 +748,9 @@ struct ImageView: View {
                             RotationGesture()
                                 .onChanged { value in
                                     // [撤销/重做] 记录旋转开始时的值（仅在第一次 onChanged 时记录）
-                                    if rotationAngle == .zero {
+                                    if !isRotationGestureActive {
                                         rotationStartValue = imageEntity.rotation
+                                        isRotationGestureActive = true
                                     }
                                     rotationAngle = value
                                 }
@@ -744,6 +769,7 @@ struct ImageView: View {
                                     }
                                     rotationAngle = .zero
                                     rotationStartValue = 0
+                                    isRotationGestureActive = false
                                 }
                         )
                     )
@@ -786,7 +812,14 @@ struct ImageView: View {
                     
                     Button(LocalizedStringKey("Reset Scale")) {
                         if let index = appState.images.firstIndex(where: { $0.id == imageEntity.id }) {
+                            let oldScale = appState.images[index].scale
                             appState.images[index].scale = 1.0
+                            // [撤销/重做] 记录重置缩放操作
+                            appState.undoManager.recordAction(.scale(
+                                imageId: imageEntity.id,
+                                oldScale: oldScale,
+                                newScale: 1.0
+                            ))
                         }
                     }
                     
@@ -875,6 +908,13 @@ struct ImageView: View {
                         default:
                             appState.multiSelectAnchor = CGPoint(x: bounds.midX, y: bounds.midY)
                         }
+                        
+                        // [Smart Guides] 缩放开始时构建参考线缓存
+                        if appState.snapEnabled {
+                            let guides = appState.buildSnapGuides(draggedIds: appState.selectedImageIds)
+                            appState.snapXGuides = guides.xGuides
+                            appState.snapYGuides = guides.yGuides
+                        }
                     }
                 }
                 
@@ -923,6 +963,27 @@ struct ImageView: View {
                 
                 // 限制最小缩放
                 k = max(0.1, k)
+                
+                // [Smart Guides] 缩放过程中检测参考线吸附
+                if appState.snapEnabled && !appState.snapXGuides.isEmpty {
+                    let snapResult = appState.performResizeSnap(
+                        draggedIds: appState.selectedImageIds,
+                        initialBounds: bounds,
+                        anchor: anchor,
+                        currentK: k,
+                        xGuides: appState.snapXGuides,
+                        yGuides: appState.snapYGuides,
+                        canvasScale: appState.canvasScale
+                    )
+                    k = snapResult.correctedK
+                    withAnimation(.easeIn(duration: 0.08)) {
+                        appState.activeSnapLines = snapResult.snapLines
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        appState.activeSnapLines = []
+                    }
+                }
                 
                 // [交互逻辑] 多选缩放支持
                 // 更新全局缩放因子，让所有选中的图片都能实时预览缩放效果。
@@ -973,6 +1034,13 @@ struct ImageView: View {
                     appState.undoManager.recordAction(.batchScale(changes: scaleChanges))
                 }
                 
+                // [Smart Guides] 清除缩放参考线
+                withAnimation(.easeOut(duration: 0.12)) {
+                    appState.activeSnapLines = []
+                }
+                appState.snapXGuides = []
+                appState.snapYGuides = []
+                
                 // 重置临时状态
                 zoomScale = 1.0
                 appState.multiSelectScaleFactor = 1.0
@@ -1020,7 +1088,7 @@ struct GridBackground: View {
             }
             
             let gridStep = effectiveSpacing * scale
-            let dotRadius = 1.0 // Constant screen size for dots
+            let dotRadius = dotSize / 2.0 // Constant screen size for dots
             
             let offsetX = offset.width * scale
             let offsetY = offset.height * scale
@@ -1055,8 +1123,8 @@ struct ActiveAreaBackground: View {
     
     var body: some View {
         Canvas { context, size in
-            // 使用画板边界（固定范围，只扩展不收缩）
-            let worldBounds = appState.boardBounds
+            // 使用显示边界（带平滑动画过渡）/ Use display bounds (with smooth animation)
+            let worldBounds = appState.displayBoardBounds
 
             // 将世界坐标转换为屏幕坐标
             // 图片层变换链: .offset(canvasOffset).scaleEffect(canvasScale)
@@ -1089,11 +1157,12 @@ struct OptimizedGridBackground: View {
     var scale: CGFloat
     var color: Color
     var frameSize: CGSize
+    var dotSize: Double = 2.0
     
     var body: some View {
         Canvas { context, size in
-            // 使用画板边界（固定范围，只扩展不收缩）
-            let worldBounds = appState.boardBounds
+            // 使用显示边界（带平滑动画过渡）/ Use display bounds (with smooth animation)
+            let worldBounds = appState.displayBoardBounds
 
             // 将世界坐标转换为屏幕坐标
             // 正向变换: Screen = Center + (World + Offset - Center) * Scale
@@ -1184,6 +1253,163 @@ struct OptimizedGridBackground: View {
     }
 }
 
+// MARK: - UE5 Blueprint Grid Background
+/// UE5 蓝图编辑器风格的网格背景 / UE5 Blueprint editor style grid background
+/// 特征：深蓝灰色背景 + 细线小网格 + 粗线大网格
+struct UE5BlueprintGridBackground: View {
+    var appState: AppState
+    var offset: CGSize
+    var scale: CGFloat
+    var frameSize: CGSize
+    var bgColorHex: String
+    var smallGridColorHex: String
+    var largeGridColorHex: String
+    var largeGridMultiplier: Int
+    var smallLineWidth: Double
+    var largeLineWidth: Double
+    var smallLineAlpha: Double
+    var largeLineAlpha: Double
+    
+    var body: some View {
+        Canvas { context, size in
+            // 使用显示边界（带平滑动画过渡）/ Use display bounds (with smooth animation)
+            let worldBounds = appState.displayBoardBounds
+
+            // 将世界坐标转换为屏幕坐标
+            let centerX = size.width / 2
+            let centerY = size.height / 2
+
+            let screenMinX = centerX + (worldBounds.minX + offset.width - centerX) * scale
+            let screenMinY = centerY + (worldBounds.minY + offset.height - centerY) * scale
+            let screenMaxX = centerX + (worldBounds.maxX + offset.width - centerX) * scale
+            let screenMaxY = centerY + (worldBounds.maxY + offset.height - centerY) * scale
+
+            // 裁剪到可见区域
+            let visibleMinX = max(0, screenMinX)
+            let visibleMinY = max(0, screenMinY)
+            let visibleMaxX = min(size.width, screenMaxX)
+            let visibleMaxY = min(size.height, screenMaxY)
+
+            guard visibleMinX < visibleMaxX && visibleMinY < visibleMaxY else {
+                return
+            }
+
+            // --- 从参数读取 UE5 蓝图风格颜色 ---
+            let ue5BgColor = Color(hex: bgColorHex)
+
+            // 先填充 UE5 蓝图背景色覆盖活动区域 / Fill UE5 blueprint bg over active area
+            let visibleRect = CGRect(x: visibleMinX, y: visibleMinY,
+                                     width: visibleMaxX - visibleMinX,
+                                     height: visibleMaxY - visibleMinY)
+            context.fill(Path(visibleRect), with: .color(ue5BgColor))
+
+            // --- 缩放自适应线宽 ---
+            // 当缩放 < 1.0 时，线宽按比例衰减（最小 0.5），防止线条视觉堆叠
+            let scaleFactor = min(1.0, max(scale, 0.1))
+            let widthFactor: CGFloat = scaleFactor < 1.0 ? (0.5 + 0.5 * ((scaleFactor - 0.1) / 0.9)) : 1.0
+            let adaptiveSmallLineWidth = max(0.5, smallLineWidth * widthFactor)
+            let adaptiveLargeLineWidth = max(0.5, largeLineWidth * widthFactor)
+
+            // --- 缩放自适应透明度 ---
+            // 当缩放 < 0.3 时，透明度开始衰减，极端缩放下线条渐隐
+            let alphaFactor: Double = scale < 0.3 ? min(1.0, max(0.0, (scale - 0.05) / 0.25)) : 1.0
+            let adaptiveSmallAlpha = smallLineAlpha * alphaFactor
+            let adaptiveLargeAlpha = largeLineAlpha * alphaFactor
+
+            let smallGridColor = Color(hex: smallGridColorHex).opacity(adaptiveSmallAlpha)
+            let largeGridColor = Color(hex: largeGridColorHex).opacity(adaptiveLargeAlpha)
+
+            // 小网格参数 / Small grid parameters
+            let baseSpacing: CGFloat = 20.0
+            var effectiveSmall = baseSpacing
+            // LOD 阈值提高到 12px（与 Win11 一致）
+            while (effectiveSmall * scale) < 12 {
+                effectiveSmall *= 2
+            }
+            let smallGridStep = effectiveSmall * scale
+
+            // 大网格参数（使用可配置倍数）/ Large grid (configurable multiplier)
+            let largeMultiplier = CGFloat(largeGridMultiplier)
+            var effectiveLarge = baseSpacing * largeMultiplier
+            // LOD 阈值提高到 50px（与 Win11 一致）
+            while (effectiveLarge * scale) < 50 {
+                effectiveLarge *= 2
+            }
+            let largeGridStep = effectiveLarge * scale
+
+            // 世界原点在屏幕上的位置 / World origin on screen
+            let originScreenX = centerX + (offset.width - centerX) * scale
+            let originScreenY = centerY + (offset.height - centerY) * scale
+
+            // --- 小网格起始位置 ---
+            var smallStartX = originScreenX.truncatingRemainder(dividingBy: smallGridStep)
+            if smallStartX < 0 { smallStartX += smallGridStep }
+            var smallStartY = originScreenY.truncatingRemainder(dividingBy: smallGridStep)
+            if smallStartY < 0 { smallStartY += smallGridStep }
+
+            // 调整到可见区域
+            var drawSmallStartX = smallStartX
+            while drawSmallStartX < visibleMinX { drawSmallStartX += smallGridStep }
+            var drawSmallStartY = smallStartY
+            while drawSmallStartY < visibleMinY { drawSmallStartY += smallGridStep }
+
+            // --- 大网格起始位置 ---
+            var largeStartX = originScreenX.truncatingRemainder(dividingBy: largeGridStep)
+            if largeStartX < 0 { largeStartX += largeGridStep }
+            var largeStartY = originScreenY.truncatingRemainder(dividingBy: largeGridStep)
+            if largeStartY < 0 { largeStartY += largeGridStep }
+
+            var drawLargeStartX = largeStartX
+            while drawLargeStartX < visibleMinX { drawLargeStartX += largeGridStep }
+            var drawLargeStartY = largeStartY
+            while drawLargeStartY < visibleMinY { drawLargeStartY += largeGridStep }
+
+            // 安全上限检查 / Safety cap
+            let estimatedSmallLines = ((visibleMaxX - drawSmallStartX) / smallGridStep) +
+                                      ((visibleMaxY - drawSmallStartY) / smallGridStep)
+            
+            // --- 绘制小网格线 ---
+            if estimatedSmallLines < 3000 {
+                // 垂直细线 / Vertical thin lines
+                var smallPath = Path()
+                var x = drawSmallStartX
+                while x <= visibleMaxX {
+                    smallPath.move(to: CGPoint(x: x, y: visibleMinY))
+                    smallPath.addLine(to: CGPoint(x: x, y: visibleMaxY))
+                    x += smallGridStep
+                }
+                // 水平细线 / Horizontal thin lines
+                var y = drawSmallStartY
+                while y <= visibleMaxY {
+                    smallPath.move(to: CGPoint(x: visibleMinX, y: y))
+                    smallPath.addLine(to: CGPoint(x: visibleMaxX, y: y))
+                    y += smallGridStep
+                }
+                context.stroke(smallPath, with: .color(smallGridColor), lineWidth: adaptiveSmallLineWidth)
+            }
+
+            // --- 绘制大网格线 ---
+            var largePath = Path()
+            // 垂直粗线 / Vertical thick lines
+            var lx = drawLargeStartX
+            while lx <= visibleMaxX {
+                largePath.move(to: CGPoint(x: lx, y: visibleMinY))
+                largePath.addLine(to: CGPoint(x: lx, y: visibleMaxY))
+                lx += largeGridStep
+            }
+            // 水平粗线 / Horizontal thick lines
+            var ly = drawLargeStartY
+            while ly <= visibleMaxY {
+                largePath.move(to: CGPoint(x: visibleMinX, y: ly))
+                largePath.addLine(to: CGPoint(x: visibleMaxX, y: ly))
+                ly += largeGridStep
+            }
+            context.stroke(largePath, with: .color(largeGridColor), lineWidth: adaptiveLargeLineWidth)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - Group View
 /// 组视图，用于渲染图片组 / Group view for rendering image groups
 struct GroupView: View {
@@ -1247,8 +1473,7 @@ struct GroupView: View {
                     .foregroundColor(Color(hex: String(group.colorHex.prefix(7))))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color(white: 0.15, opacity: 0.85))
-                    .cornerRadius(4)
+                    .glassEffect(.regular.tint(Color(hex: String(group.colorHex.prefix(7))).opacity(0.5)), in: .capsule)
                     .fixedSize()  // 防止文本被截断
                     .alignmentGuide(.top) { d in d[.bottom] + 4 }  // 将标签推到组框上方
                     .onTapGesture(count: 2) {
@@ -1351,32 +1576,49 @@ struct GroupView: View {
             }
         }
         .sheet(isPresented: $showNameEditor) {
-            // 名称编辑弹窗 / Name edit sheet
-            VStack(spacing: 16) {
-                Text(LocalizedStringKey("Group Name"))
-                    .font(.headline)
-                
-                TextField("", text: $editingName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
-                
-                HStack {
-                    Button(LocalizedStringKey("Cancel")) {
-                        showNameEditor = false
-                    }
-                    .keyboardShortcut(.cancelAction)
+            // [Liquid Glass] 名称编辑弹窗 / Name edit sheet
+            // 修复：移除老式 .presentationBackground(.regularMaterial)，
+            // 改用 GlassEffectContainer + glassEffect 实现液态玻璃效果，
+            // 避免 macOS 上 .presentationBackground 对 Material 支持不稳定的问题。
+            GlassEffectContainer {
+                VStack(spacing: 16) {
+                    Text(LocalizedStringKey("Group Name"))
+                        .font(.headline)
                     
-                    Button(LocalizedStringKey("OK")) {
-                        if let index = appState.groups.firstIndex(where: { $0.id == group.id }) {
-                            appState.groups[index].name = editingName
+                    TextField("", text: $editingName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                    
+                    HStack(spacing: 12) {
+                        Button(LocalizedStringKey("Cancel")) {
+                            showNameEditor = false
                         }
-                        showNameEditor = false
+                        .keyboardShortcut(.cancelAction)
+                        
+                        Button(LocalizedStringKey("OK")) {
+                            if let index = appState.groups.firstIndex(where: { $0.id == group.id }) {
+                                let oldName = appState.groups[index].name
+                                appState.groups[index].name = editingName
+                                
+                                // [撤销/重做] 记录组重命名操作
+                                if oldName != editingName {
+                                    appState.undoManager.recordAction(.renameGroup(
+                                        groupId: group.id,
+                                        oldName: oldName,
+                                        newName: editingName
+                                    ))
+                                }
+                            }
+                            showNameEditor = false
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
                     }
-                    .keyboardShortcut(.defaultAction)
                 }
+                .padding(24)
+                .frame(width: 300)
+                .glassEffect(.regular, in: .rect(cornerRadius: 16))
             }
-            .padding(20)
-            .frame(width: 280)
         }
     }
     
@@ -1439,6 +1681,24 @@ struct GroupView: View {
             }
             .onEnded { _ in
                 isResizing = false
+                
+                // [撤销/重做] 记录组调整大小操作
+                if let startRect = resizeStartRect,
+                   let index = appState.groups.firstIndex(where: { $0.id == group.id }) {
+                    let newRect = CGRect(
+                        x: appState.groups[index].x,
+                        y: appState.groups[index].y,
+                        width: appState.groups[index].width,
+                        height: appState.groups[index].height
+                    )
+                    if startRect != newRect {
+                        appState.undoManager.recordAction(.resizeGroup(
+                            groupId: group.id,
+                            oldRect: startRect,
+                            newRect: newRect
+                        ))
+                    }
+                }
                 
                 // 调整组边界后检测拉入图片 / Check for images to pull into group after resize
                 appState.checkImagesInGroupBounds(groupId: group.id)

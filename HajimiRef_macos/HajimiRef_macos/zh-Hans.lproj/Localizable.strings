@@ -24,6 +24,10 @@
 "Canvas Background" = "画布背景";
 "Show Dot Grid" = "显示点阵";
 "Dot Grid Color" = "点阵颜色";
+"Canvas Theme" = "画板主题";
+"Dot Grid" = "点阵网格";
+"UE5 Blueprint" = "UE5 蓝图";
+"Choose the visual style of the canvas grid." = "选择画板网格的视觉风格。";
 "Reset to Defaults" = "恢复默认设置";
 "Customize the background color of the infinite canvas." = "自定义无限画布的背景颜色。";
 "Display a dot grid pattern similar to Apple Freeform." = "显示类似 Apple 无边记的点阵图案。";
@@ -72,3 +76,72 @@
 /* Smart Guides */
 "✓ Smart Guides (On)" = "✓ 智能对齐（已开启）";
 "Smart Guides (Off)" = "智能对齐（已关闭）";
+
+/* Edit Menu */
+"Copy" = "拷贝";
+"Paste" = "粘贴";
+
+/* Settings Navigation */
+"Settings" = "设置";
+"Help" = "帮助";
+
+/* Board Settings */
+"Board" = "画板";
+"Auto Reset Board" = "自动重置画板";
+"Automatically reset board size based on image distribution." = "根据图片分布自动重置画板大小。";
+"Interval" = "间隔时间";
+"5 minutes" = "5 分钟";
+"10 minutes" = "10 分钟";
+"15 minutes" = "15 分钟";
+"30 minutes" = "30 分钟";
+"60 minutes" = "60 分钟";
+"How often to automatically reset the board size." = "自动重置画板大小的时间间隔。";
+"Reset Board Now" = "立即重置画板";
+"Reset board size to fit current image distribution." = "根据当前图片分布重置画板大小。";
+"Choose the display language for the app." = "选择应用的显示语言。";
+
+/* Help View */
+"Help & Guide" = "帮助与指南";
+"Basic Operations" = "基本操作";
+"Image Manipulation" = "图片操作";
+"Shortcuts" = "快捷键";
+
+/* Layer Menu */
+"Layer" = "图层";
+"Bring Forward" = "向前一层";
+"Send Backward" = "向后一层";
+
+/* Group */
+"Group Selected (G)" = "打组";
+"Group Name" = "组名称";
+
+/* Canvas Theme */
+"Blueprint Background" = "蓝图背景色";
+"Small Grid Color" = "小网格颜色";
+"Large Grid Color" = "大网格颜色";
+"Large Grid Interval" = "大网格间隔";
+"Small Grid Line Width" = "小网格线宽";
+"Large Grid Line Width" = "大网格线宽";
+"Small Grid Opacity" = "小网格透明度";
+"Large Grid Opacity" = "大网格透明度";
+"Dot Size" = "点大小";
+"Adjust the size of grid dots." = "调整网格点的大小。";
+"Adjust the width of small grid lines." = "调整小网格线的宽度。";
+"Adjust the width of large grid lines." = "调整大网格线的宽度。";
+"Adjust the opacity of small grid lines." = "调整小网格线的透明度。";
+"Adjust the opacity of large grid lines." = "调整大网格线的透明度。";
+"Customize the UE5 blueprint background color." = "自定义 UE5 蓝图的背景颜色。";
+"Customize the small grid line color." = "自定义小网格线的颜色。";
+"Customize the large grid line color." = "自定义大网格线的颜色。";
+"Number of small grid cells per large grid line." = "每条大网格线之间的小网格数量。";
+"bg_opacity" = "背景不透明度";
+
+/* Color Depth */
+"Color Depth" = "色深";
+"Color Depth Mode" = "色深模式";
+"Auto (Adaptive)" = "自适应";
+"8bit (Standard)" = "8bit（标准色深）";
+"10bit (High Color)" = "10bit（高色深）";
+"16bit (Maximum)" = "16bit（最高精度）";
+"Auto mode: high-bit images render at high bit depth, low-bit images at 8bit." = "自适应模式：高位深图像以高位深渲染，低位深图像以8bit渲染。";
+"Auto mode adapts to each image's native bit depth for optimal quality and memory usage." = "自适应模式会根据每张图像的原始位深自动选择最佳渲染精度，兼顾画质与内存占用。";

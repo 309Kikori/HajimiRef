@@ -24,6 +24,10 @@
 "Canvas Background" = "Canvas Background";
 "Show Dot Grid" = "Show Dot Grid";
 "Dot Grid Color" = "Dot Grid Color";
+"Canvas Theme" = "Canvas Theme";
+"Dot Grid" = "Dot Grid";
+"UE5 Blueprint" = "UE5 Blueprint";
+"Choose the visual style of the canvas grid." = "Choose the visual style of the canvas grid.";
 "Reset to Defaults" = "Reset to Defaults";
 "Customize the background color of the infinite canvas." = "Customize the background color of the infinite canvas.";
 "Display a dot grid pattern similar to Apple Freeform." = "Display a dot grid pattern similar to Apple Freeform.";
@@ -73,6 +77,71 @@
 "✓ Smart Guides (On)" = "✓ Smart Guides (On)";
 "Smart Guides (Off)" = "Smart Guides (Off)";
 
-/* Smart Guides */
-"✓ Smart Guides (On)" = "✓ Smart Guides (On)";
-"Smart Guides (Off)" = "Smart Guides (Off)";
+/* Edit Menu */
+"Copy" = "Copy";
+"Paste" = "Paste";
+
+/* Settings Navigation */
+"Settings" = "Settings";
+"Help" = "Help";
+
+/* Board Settings */
+"Board" = "Board";
+"Auto Reset Board" = "Auto Reset Board";
+"Automatically reset board size based on image distribution." = "Automatically reset board size based on image distribution.";
+"Interval" = "Interval";
+"5 minutes" = "5 minutes";
+"10 minutes" = "10 minutes";
+"15 minutes" = "15 minutes";
+"30 minutes" = "30 minutes";
+"60 minutes" = "60 minutes";
+"How often to automatically reset the board size." = "How often to automatically reset the board size.";
+"Reset Board Now" = "Reset Board Now";
+"Reset board size to fit current image distribution." = "Reset board size to fit current image distribution.";
+"Choose the display language for the app." = "Choose the display language for the app.";
+
+/* Help View */
+"Help & Guide" = "Help & Guide";
+"Basic Operations" = "Basic Operations";
+"Image Manipulation" = "Image Manipulation";
+"Shortcuts" = "Shortcuts";
+
+/* Layer Menu */
+"Layer" = "Layer";
+"Bring Forward" = "Bring Forward";
+"Send Backward" = "Send Backward";
+
+/* Group */
+"Group Selected (G)" = "Group Selected (G)";
+"Group Name" = "Group Name";
+
+/* Canvas Theme */
+"Blueprint Background" = "Blueprint Background";
+"Small Grid Color" = "Small Grid Color";
+"Large Grid Color" = "Large Grid Color";
+"Large Grid Interval" = "Large Grid Interval";
+"Small Grid Line Width" = "Small Grid Line Width";
+"Large Grid Line Width" = "Large Grid Line Width";
+"Small Grid Opacity" = "Small Grid Opacity";
+"Large Grid Opacity" = "Large Grid Opacity";
+"Dot Size" = "Dot Size";
+"Adjust the size of grid dots." = "Adjust the size of grid dots.";
+"Adjust the width of small grid lines." = "Adjust the width of small grid lines.";
+"Adjust the width of large grid lines." = "Adjust the width of large grid lines.";
+"Adjust the opacity of small grid lines." = "Adjust the opacity of small grid lines.";
+"Adjust the opacity of large grid lines." = "Adjust the opacity of large grid lines.";
+"Customize the UE5 blueprint background color." = "Customize the UE5 blueprint background color.";
+"Customize the small grid line color." = "Customize the small grid line color.";
+"Customize the large grid line color." = "Customize the large grid line color.";
+"Number of small grid cells per large grid line." = "Number of small grid cells per large grid line.";
+"bg_opacity" = "Background Opacity";
+
+/* Color Depth */
+"Color Depth" = "Color Depth";
+"Color Depth Mode" = "Color Depth Mode";
+"Auto (Adaptive)" = "Auto (Adaptive)";
+"8bit (Standard)" = "8bit (Standard)";
+"10bit (High Color)" = "10bit (High Color)";
+"16bit (Maximum)" = "16bit (Maximum)";
+"Auto mode: high-bit images render at high bit depth, low-bit images at 8bit." = "Auto mode: high-bit images render at high bit depth, low-bit images at 8bit.";
+"Auto mode adapts to each image's native bit depth for optimal quality and memory usage." = "Auto mode adapts to each image's native bit depth for optimal quality and memory usage.";

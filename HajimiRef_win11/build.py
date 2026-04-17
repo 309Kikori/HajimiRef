@@ -32,10 +32,22 @@ def main():
     print("[2/3] 开始打包 (请耐心等待)...")
     print()
     
-    result = subprocess.run(
-        [sys.executable, "-m", "PyInstaller", "HajimiRef.spec", "--noconfirm"],
-        shell=False
-    )
+    icon_path = os.path.join(script_dir, "assets", "icon.png")
+    cmd = [
+        sys.executable, "-m", "PyInstaller",
+        "App.py",
+        "--onefile",
+        "--windowed",
+        "--name", "HajimiRef",
+        "--noconfirm",
+        "--add-data", f"assets{os.pathsep}assets",
+        "--add-data", f"localization.py{os.pathsep}.",
+    ]
+    # 如果图标存在则添加（注意：.ico 格式最佳，.png 也可尝试）
+    if os.path.exists(icon_path):
+        cmd.extend(["--icon", icon_path])
+    
+    result = subprocess.run(cmd, shell=False)
 
     # 3. 检查构建结果
     print()

@@ -265,4 +265,136 @@ extension AppState {
         
         return maxVal == -.greatestFiniteMagnitude ? 0 : maxVal
     }
+    
+    // MARK: - 缩放吸附检测
+    // Perform snap detection during resize and return corrected scale factor + active snap lines.
+    
+    func performResizeSnap(
+        draggedIds: Set<UUID>,
+        initialBounds: CGRect,
+        anchor: CGPoint,
+        currentK: CGFloat,
+        xGuides: [SnapGuideEntry],
+        yGuides: [SnapGuideEntry],
+        canvasScale: CGFloat
+    ) -> (correctedK: CGFloat, snapLines: [SnapLine]) {
+        
+        // 吸附阈值：5屏幕像素 → 世界坐标 / Threshold: 5 screen px -> world coords
+        let screenThreshold: CGFloat = 5.0
+        let threshold = screenThreshold / max(canvasScale, 0.01)
+        
+        // 计算当前缩放后的边界 / Calculate scaled bounds
+        // NewEdge = Anchor + (OldEdge - Anchor) * k
+        let scaledLeft   = anchor.x + (initialBounds.minX - anchor.x) * currentK
+        let scaledRight  = anchor.x + (initialBounds.maxX - anchor.x) * currentK
+        let scaledTop    = anchor.y + (initialBounds.minY - anchor.y) * currentK
+        let scaledBottom = anchor.y + (initialBounds.maxY - anchor.y) * currentK
+        let scaledCenterX = (scaledLeft + scaledRight) / 2
+        let scaledCenterY = (scaledTop + scaledBottom) / 2
+        
+        // 检测 X 方向（左右边缘 + 中心）的吸附 / Check X-axis snapping
+        let xEdges: [(value: CGFloat, initialValue: CGFloat)] = [
+            (scaledLeft,    initialBounds.minX),
+            (scaledCenterX, (initialBounds.minX + initialBounds.maxX) / 2),
+            (scaledRight,   initialBounds.maxX)
+        ]
+        
+        var bestSnapX: (guideValue: CGFloat, edgeValue: CGFloat, initialEdge: CGFloat, distance: CGFloat)? = nil
+        for edge in xEdges {
+            if let result = findNearestGuide(in: xGuides, value: edge.value, threshold: threshold) {
+                if bestSnapX == nil || result.distance < bestSnapX!.distance {
+                    bestSnapX = (result.guideValue, edge.value, edge.initialValue, result.distance)
+                }
+            }
+        }
+        
+        // 检测 Y 方向（上下边缘 + 中心）的吸附 / Check Y-axis snapping
+        let yEdges: [(value: CGFloat, initialValue: CGFloat)] = [
+            (scaledTop,     initialBounds.minY),
+            (scaledCenterY, (initialBounds.minY + initialBounds.maxY) / 2),
+            (scaledBottom,  initialBounds.maxY)
+        ]
+        
+        var bestSnapY: (guideValue: CGFloat, edgeValue: CGFloat, initialEdge: CGFloat, distance: CGFloat)? = nil
+        for edge in yEdges {
+            if let result = findNearestGuide(in: yGuides, value: edge.value, threshold: threshold) {
+                if bestSnapY == nil || result.distance < bestSnapY!.distance {
+                    bestSnapY = (result.guideValue, edge.value, edge.initialValue, result.distance)
+                }
+            }
+        }
+        
+        // 反算吸附后的 k 值 / Reverse-calculate corrected k from snapped edge
+        // guideValue = anchor + (initialEdge - anchor) * correctedK
+        // correctedK = (guideValue - anchor) / (initialEdge - anchor)
+        var correctedK = currentK
+        var snapLines: [SnapLine] = []
+        let lineExtension: CGFloat = 20 / max(canvasScale, 0.01)
+        
+        // 选择吸附距离最小的轴 / Pick the axis with the smallest snap distance
+        // 对于等比缩放，只能应用一个轴的吸附修正
+        var bestSnap: (guideValue: CGFloat, initialEdge: CGFloat, axis: SnapLine.Axis, distance: CGFloat)? = nil
+        
+        if let sx = bestSnapX {
+            bestSnap = (sx.guideValue, sx.initialEdge, .x, sx.distance)
+        }
+        if let sy = bestSnapY {
+            if bestSnap == nil || sy.distance < bestSnap!.distance {
+                bestSnap = (sy.guideValue, sy.initialEdge, .y, sy.distance)
+            }
+        }
+        
+        if let snap = bestSnap {
+            let denominator: CGFloat
+            switch snap.axis {
+            case .x:
+                denominator = snap.initialEdge - anchor.x
+            case .y:
+                denominator = snap.initialEdge - anchor.y
+            }
+            
+            if abs(denominator) > 1 {
+                let newK: CGFloat
+                switch snap.axis {
+                case .x:
+                    newK = (snap.guideValue - anchor.x) / denominator
+                case .y:
+                    newK = (snap.guideValue - anchor.y) / denominator
+                }
+                if newK > 0.05 { // 防止缩放到极小值
+                    correctedK = newK
+                }
+            }
+        }
+        
+        // 用修正后的 k 重新计算边界，生成辅助线 / Recalculate bounds with corrected k for snap lines
+        let finalLeft   = anchor.x + (initialBounds.minX - anchor.x) * correctedK
+        let finalRight  = anchor.x + (initialBounds.maxX - anchor.x) * correctedK
+        let finalTop    = anchor.y + (initialBounds.minY - anchor.y) * correctedK
+        let finalBottom = anchor.y + (initialBounds.maxY - anchor.y) * correctedK
+        let finalCenterX = (finalLeft + finalRight) / 2
+        let finalCenterY = (finalTop + finalBottom) / 2
+        
+        // 生成吸附到的辅助线 / Generate snap lines for the snapped edges
+        let finalXEdges = [finalLeft, finalCenterX, finalRight]
+        let finalYEdges = [finalTop, finalCenterY, finalBottom]
+        
+        for xVal in finalXEdges {
+            if let _ = findNearestGuide(in: xGuides, value: xVal, threshold: 1.0) {
+                let lineTop = min(finalTop, getGuideExtentMin(axis: .y, snapValue: xVal, draggedIds: draggedIds)) - lineExtension
+                let lineBottom = max(finalBottom, getGuideExtentMax(axis: .y, snapValue: xVal, draggedIds: draggedIds)) + lineExtension
+                snapLines.append(SnapLine(axis: .x, value: xVal, start: lineTop, end: lineBottom))
+            }
+        }
+        
+        for yVal in finalYEdges {
+            if let _ = findNearestGuide(in: yGuides, value: yVal, threshold: 1.0) {
+                let lineLeft = min(finalLeft, getGuideExtentMin(axis: .x, snapValue: yVal, draggedIds: draggedIds)) - lineExtension
+                let lineRight = max(finalRight, getGuideExtentMax(axis: .x, snapValue: yVal, draggedIds: draggedIds)) + lineExtension
+                snapLines.append(SnapLine(axis: .y, value: yVal, start: lineLeft, end: lineRight))
+            }
+        }
+        
+        return (correctedK, snapLines)
+    }
 }
